@@ -4,6 +4,10 @@ A small, dependency-free command line agent. It runs an OpenAI-compatible
 model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
 file tools, shell access, SKILL.md skills and persistent memory.
 
+## Requirements
+it only requires Node ≥24 (declared in package.json engines)
+
+## Testing
 
 ```
 $ basicagent
@@ -88,7 +92,5 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
 
-basicagent is an independent, from-scratch implementation. Its design borrows
-patterns (skill format, tool registry shape, guardrail philosophy) from
-[O.M.A.](https://github.com/komagata/oma), which is MIT licensed; no O.M.A.
-code is included.
+basicagent is an independent, from-scratch implementation. Its design with
+patterns like skill format, tool registry shape and guardrail philosophy. 
