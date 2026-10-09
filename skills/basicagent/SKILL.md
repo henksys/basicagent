@@ -40,6 +40,9 @@ Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`.
   `deny`), `protectedPaths`, size caps.
 - `tools.shell`: `enabled` (default false), `approval` (`always` / `never`),
   `timeoutMs`, `maxOutputBytes`, `denylist`.
+- `tools.web`: `fetch_url` settings — `enabled` (default true), `approval`
+  (`never` / `always`), `timeoutMs`, `maxBytes`, `maxRedirects`,
+  `allowPrivate` (default false), `denyDomains`, `allowDomains`, `userAgent`.
 - `skills.paths`: directories scanned for `<name>/SKILL.md`.
 - `memory`: `enabled`, `dir`.
 
@@ -53,6 +56,10 @@ Precedence: defaults < config file < environment < CLI flags.
 - `run_command` is off by default. When enabled, every call is shown and needs
   approval; approving a command is full trust, because a command can write
   anywhere.
+- `fetch_url` is read-only and enabled by default: it refuses private or
+  reserved network addresses (including after redirects), and always treats
+  fetched content as untrusted data. It does not run JavaScript and sends no
+  cookies. Disable it entirely with `tools.web.enabled: false` or `--no-web`.
 - Every tool call is appended to `audit.jsonl`.
 - One-shot mode denies approval-required actions unless `--yes` is passed.
 
@@ -80,8 +87,10 @@ conversation; `--ephemeral` disables memory entirely.
 
 REPL: `basicagent`. One-shot: `basicagent "prompt"`. Scripting:
 `basicagent --json "prompt"` emits JSONL events (`assistant_delta`,
-`tool_start`, `tool_end`, `done`, `error`, `approval`). REPL commands:
-`/help /new /reload /skills /tools /model [name] /config /quit`.
+`tool_start`, `tool_end`, `done`, `error`, `approval`). Handy flags:
+`--no-web` (disable web fetch for one run), `--continue`, `--session <id>`,
+`--ephemeral`. REPL commands: `/help /new /reload /skills /tools
+/model [name] /config /quit`.
 
 ## Skills
 

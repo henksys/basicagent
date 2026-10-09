@@ -17,7 +17,7 @@ basicagent> add a timeout option to src/provider.mjs and run the tests
 [tool] edit_file {"path":"src/provider.mjs","old_string":"...","new_string":"..."}
 [tool] run_command {"command":"npm","args":["test"]}
 ...
-Done: added provider.timeoutMs handling and all 48 tests pass.
+Done: added provider.timeoutMs handling and all tests pass.
 ```
 
 ## Features
@@ -30,6 +30,10 @@ Done: added provider.timeoutMs handling and all 48 tests pass.
 - **File tools** — read, write, edit, append, list, rename, with a
   root-based access policy (`rw` / `ro` / `approval` / `deny`), symlink-safe
   path checks and protected paths.
+- **Web fetch** — a zero-dependency `fetch_url` tool with SSRF protection
+  (private/reserved addresses blocked before and after redirects), domain
+  allow/deny lists, bounded HTML-to-text extraction, and no cookies or JS.
+  Disable it with `tools.web.enabled: false` or `--no-web`.
 - **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
   format used by Omarchy/Claude-style skill directories. Ships a bundled
   [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
@@ -82,6 +86,7 @@ basicagent [options] [prompt]
   --continue        resume the most recent session
   --session <id>    use a named session
   --ephemeral       disable memory for this run
+  --no-web          disable the fetch_url web tool for this run
   --json            JSON-lines event output (for scripts)
   --yes             auto-approve guarded actions in one-shot mode (dangerous)
 ```

@@ -77,6 +77,24 @@ export const DEFAULTS = Object.freeze({
       maxOutputBytes: 24000,
       // A deliberately simple, obvious backstop. It is NOT a sandbox.
       denylist: ['rm -rf /', 'mkfs', 'dd if=', 'shutdown', 'reboot', 'wipefs']
+    },
+    web: {
+      // The fetch_url tool is read-only and enabled by default. Set
+      // enabled: false (or use --no-web) to remove the tool entirely.
+      enabled: true,
+      // "always" asks for y/N approval before every fetch; "never" fetches
+      // directly. Private/reserved addresses are blocked either way.
+      approval: 'never',
+      timeoutMs: 15000,
+      maxRawBytes: 512000,
+      maxBytes: 24000,
+      maxRedirects: 5,
+      // Danger: true lets fetch_url reach localhost and private networks.
+      // Only for trusted local testing.
+      allowPrivate: false,
+      denyDomains: [],
+      allowDomains: [],
+      userAgent: ''
     }
   },
   skills: {
@@ -151,6 +169,18 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (!Number.isInteger(shell.maxOutputBytes) || shell.maxOutputBytes <= 0) throw new Error('tools.shell.maxOutputBytes must be a positive integer');
   if (!Array.isArray(shell.denylist) || shell.denylist.some((entry) => typeof entry !== 'string')) throw new Error('tools.shell.denylist must be an array of strings');
 
+  const web = config.tools.web;
+  if (typeof web.enabled !== 'boolean') throw new Error('tools.web.enabled must be a boolean');
+  if (!['always', 'never'].includes(web.approval)) throw new Error('tools.web.approval must be "always" or "never"');
+  for (const key of ['timeoutMs', 'maxRawBytes', 'maxBytes', 'maxRedirects']) {
+    if (!Number.isInteger(web[key]) || web[key] <= 0) throw new Error(`tools.web.${key} must be a positive integer`);
+  }
+  if (typeof web.allowPrivate !== 'boolean') throw new Error('tools.web.allowPrivate must be a boolean');
+  for (const key of ['denyDomains', 'allowDomains']) {
+    if (!Array.isArray(web[key]) || web[key].some((entry) => typeof entry !== 'string')) throw new Error(`tools.web.${key} must be an array of strings`);
+  }
+  if (typeof web.userAgent !== 'string') throw new Error('tools.web.userAgent must be a string');
+
   if (!Array.isArray(config.skills.paths) || config.skills.paths.some((path) => typeof path !== 'string')) throw new Error('skills.paths must be an array of strings');
   config.skills.paths = config.skills.paths.map((path) => resolveUserPath(path, cwd));
 
@@ -198,6 +228,7 @@ export function loadConfig({ flags = {}, env = process.env, cwd = process.cwd() 
   if (flags.apiKey !== undefined) config.provider.apiKey = flags.apiKey;
   if (flags.baseUrl !== undefined) config.provider.baseUrl = flags.baseUrl;
   if (flags.model !== undefined) config.provider.model = flags.model;
+  if (flags.noWeb) config.tools.web.enabled = false;
 
   // The API key may come from a named environment variable (keeps secrets
   // out of the config file). A directly configured key wins over the env name.

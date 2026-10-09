@@ -119,7 +119,7 @@ basicagent
 ```
 
 ```
-basicagent 1.1.0
+basicagent 1.2.0
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -226,7 +226,14 @@ Then `/reload` in the REPL (or just start a new run). See
     ],
     "protectedPaths": ["~/.ssh"]
   },
-  "shell": { "enabled": false, "approval": "always" }
+  "shell": { "enabled": false, "approval": "always" },
+  "web": {
+    "enabled": true,
+    "approval": "never",
+    "denyDomains": [],
+    "allowDomains": [],
+    "allowPrivate": false
+  }
 }
 ```
 
@@ -238,6 +245,12 @@ Then `/reload` in the REPL (or just start a new run). See
 - `shell` is off by default. When enabled, every command is shown and needs a
   `y` in the REPL. Approving a command is full trust: a command can write
   anywhere, so allow it only if you accept that.
+- `fetch_url` (web) is read-only and on by default. It refuses private and
+  reserved network addresses (before and after redirects) and never runs
+  JavaScript or sends cookies. Restrict it with `denyDomains` /
+  `allowDomains`, or turn it off entirely with `"enabled": false` or the
+  `--no-web` flag for one run. Set `"approval": "always"` to confirm each
+  fetch. `allowPrivate` is a testing escape hatch — leave it false.
 - Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`.
 
 ## 7. Memory
@@ -276,6 +289,10 @@ or delete files directly if you prefer.
 | `The run_command tool is disabled` | Set `tools.shell.enabled` to `true`. |
 | Approval denied in a script | One-shot denies approvals. Use `--yes`, or run the REPL. |
 | `Path is outside the configured file roots` | Add the directory to `tools.files.roots`, or run with `--cwd` inside an allowed root. |
+| Agent says it has no web tool | `fetch_url` was removed via `tools.web.enabled: false` or `--no-web`. |
+| `Blocked private or reserved address` / `Domain is in the deny list` | The web guardrails refused the URL. Adjust `allowDomains` / `denyDomains` deliberately, or use `allowPrivate` only for local testing. |
+| Fetched page looks empty or garbled | The page likely renders with JavaScript (unsupported) or served an unusual encoding. Try the raw API/URL instead. |
+| `Unsupported content type` when fetching | Only html, xhtml, xml, plain, markdown and JSON are accepted. |
 | Timeouts on slow models | Raise `provider.timeoutMs`. |
 
 ## 9. Tests

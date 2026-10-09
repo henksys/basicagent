@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { bounded, previewJSON } from '../util.mjs';
 import { fileTools } from './files.mjs';
 import { shellTools } from './shell.mjs';
+import { webTools } from './web.mjs';
 import { memoryTools } from './memory-tools.mjs';
 import { loadSkillTool } from '../skills.mjs';
 
@@ -71,6 +72,7 @@ export function createRegistry({ config, memory, skills, cwd }) {
 
   for (const tool of fileTools({ config, cwd })) add(tool);
   for (const tool of shellTools({ config, cwd })) add(tool);
+  for (const tool of webTools({ config })) add(tool);
   if (memory && config.memory.enabled) for (const tool of memoryTools({ memory })) add(tool);
   if (skills?.size) add(loadSkillTool(skills, { maxResultChars: config.agent.maxResultChars }));
 

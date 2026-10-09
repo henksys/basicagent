@@ -46,6 +46,7 @@ Options:
   --continue         Resume the most recent conversation session
   --session <id>     Use (or create) a named conversation session
   --ephemeral        Disable memory for this run
+  --no-web           Disable the fetch_url web tool for this run
   --json             One-shot JSON-lines event output (for scripts)
   --yes              Auto-approve guarded actions in one-shot mode (dangerous)
   -h, --help         Show this help
@@ -73,6 +74,7 @@ function parseFlags(argv) {
       'api-key': { type: 'string' },
       yes: { type: 'boolean' },
       ephemeral: { type: 'boolean' },
+      'no-web': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' }
     }
@@ -116,7 +118,8 @@ async function main() {
     cwd: values.cwd,
     model: values.model,
     baseUrl: values['base-url'],
-    apiKey: values['api-key']
+    apiKey: values['api-key'],
+    noWeb: values['no-web']
   };
   let config;
   try {

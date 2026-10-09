@@ -46,6 +46,7 @@ There is no framework and no dependency: Node's built-in `fetch`, `readline`,
 | `src/tools/index.mjs` | Tool registry: schema validation, dispatch, per-call audit log. |
 | `src/tools/files.mjs` | File tools plus the root-based path policy (`checkAccess`, `softRealpath`). |
 | `src/tools/shell.mjs` | `run_command` with approval, timeout, denylist and output caps. |
+| `src/tools/web.mjs` | `fetch_url`: guarded HTTP fetching, SSRF checks, bounded reads, HTML-to-text extraction. Omitted when `tools.web.enabled` is false. |
 | `src/tools/memory-tools.mjs` | `remember`, `search_memory`, `forget`. |
 | `src/skills.mjs` | SKILL.md discovery, frontmatter parsing (plain, `>` and `|`), prompt index generation, `load_skill` tool. |
 | `src/memory.mjs` | JSONL persistence: `facts.jsonl`, `sessions/<id>.jsonl`, `last-session.txt`, `audit.jsonl`. |
@@ -159,6 +160,7 @@ breaker.
 | `list_dir` | Sorted, capped listing; directories get a trailing `/`. |
 | `rename_file` | Refuses existing destinations and cross-filesystem moves. |
 | `run_command` | Disabled by default; argv only, no shell; approval + timeout + denylist. |
+| `fetch_url` | Enabled by default; http(s) only; SSRF check on the URL and every redirect; domain allow/deny; bounded stream + text caps; no JS/cookies. |
 | `remember` / `search_memory` / `forget` | Registered only when memory is enabled. |
 | `load_skill` | Registered only when skills are found. |
 
@@ -181,6 +183,41 @@ Paths outside every root are refused with an error the model can read.
 **Shell caveat:** approving a `run_command` is full trust; a command can write
 anywhere, including outside all roots. The roots constrain only the file tools.
 Keep `tools.shell.enabled` false unless you need it.
+
+## Web access policy
+
+`fetch_url` (`src/tools/web.mjs`) is enabled by default and read-only. Every
+request — including each redirect hop — passes the same checks:
+
+1. **URL**: `http:`/`https:` only, no embedded credentials; `localhost` names
+   refused.
+2. **Domains**: `denyDomains` always wins; when `allowDomains` is non-empty it
+   becomes an allowlist. Entries match the domain and its subdomains;
+   `*.example.com` also matches the apex.
+3. **Addresses**: the hostname is resolved with `dns.lookup({all:true})` and
+   refused when any result is private or reserved: loopback, RFC 1918, CGNAT,
+   link-local (including the `169.254.169.254` cloud metadata address),
+   TEST-NETs, multicast, ULA and IPv6 link-local. `tools.web.allowPrivate`
+   disables this and is meant only for trusted local testing.
+4. **Bounds**: `redirect: 'manual'` with at most `maxRedirects` hops; the body
+   is streamed with a `maxRawBytes` cap (the rest is cancelled); the sanitized
+   text is capped at `maxBytes` and flagged `truncated`.
+5. **Content**: only text/html, xhtml+xml, xml, plain, markdown and JSON are
+   accepted. Charset comes from the Content-Type header or a `<meta charset>`
+   sniff and is decoded with `TextDecoder`.
+
+HTML is converted to text by an ordered regex pipeline: comments/doctype/CDATA,
+then `head|script|style|noscript|template|svg|iframe`, then a `<main>` or
+`<article>` region when present, then block structure becomes newlines
+(`<li>` becomes `- `, headings become `#`), then tags are stripped and entities
+are decoded in a single pass (no double decoding of `&amp;lt;`).
+
+Deliberate limitations: regex handling is best-effort and can leak markup on
+pathological HTML; DNS resolution and the actual connection are not pinned, so
+a determined DNS-rebinding attack is out of scope (TOCTOU); there is no
+JavaScript rendering, no cookie/auth support and no robots.txt handling.
+Setting `tools.web.enabled: false` (or `--no-web`) removes the tool from the
+schema entirely; `approval: "always"` asks for a y/N before each fetch.
 
 ## Skills
 

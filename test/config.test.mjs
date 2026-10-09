@@ -129,3 +129,36 @@ test('the bundled skills directory is present with default paths too', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('tools.web is validated', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    const cases = [
+      [{ tools: { web: { approval: 'sometimes' } } }, /tools\.web\.approval/],
+      [{ tools: { web: { maxBytes: 0 } } }, /tools\.web\.maxBytes/],
+      [{ tools: { web: { maxRedirects: -1 } } }, /tools\.web\.maxRedirects/],
+      [{ tools: { web: { allowPrivate: 'yes' } } }, /tools\.web\.allowPrivate/],
+      [{ tools: { web: { denyDomains: 'example.com' } } }, /tools\.web\.denyDomains/],
+      [{ tools: { web: { userAgent: 5 } } }, /tools\.web\.userAgent/]
+    ];
+    for (const [body, pattern] of cases) {
+      writeFileSync(configPath, JSON.stringify(body));
+      assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), pattern, JSON.stringify(body));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the noWeb flag disables the web tool for one run', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ tools: { web: { enabled: true } } }));
+    const config = loadConfig({ flags: { config: configPath, noWeb: true }, env: {}, cwd: dir });
+    assert.equal(config.tools.web.enabled, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

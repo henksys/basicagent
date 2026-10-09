@@ -56,6 +56,7 @@ test('one-shot --json runs a tool call and reports done', async (t) => {
 
   // The tool schema and the user message reached the provider.
   assert.ok(server.requests[0].tools.some((tool) => tool.function.name === 'write_file'));
+  assert.ok(server.requests[0].tools.some((tool) => tool.function.name === 'fetch_url'), 'web tool is on by default');
   assert.equal(server.requests[1].messages.at(-1).role, 'tool');
 });
 
@@ -140,4 +141,17 @@ test('--base-url and --model flags override the config file', async (t) => {
   const events = parseJSONL(result.stdout);
   assert.equal(events.find((event) => event.type === 'done').text, 'Overridden.');
   assert.equal(server.requests[0].model, 'from-flag');
+});
+
+test('--no-web removes fetch_url from the tool schema', async (t) => {
+  const server = await startFakeProvider([[textChunk('No web here.'), finishChunk('stop')]]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const result = await runCli(['--config', configPath, '--json', '--no-web', 'hello'], { cwd: dir });
+  assert.equal(result.code, 0, result.stderr);
+  const names = server.requests[0].tools.map((tool) => tool.function.name);
+  assert.ok(!names.includes('fetch_url'), 'fetch_url must be absent');
+  assert.ok(names.includes('read_file'), 'other tools remain');
 });
