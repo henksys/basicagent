@@ -1,0 +1,25 @@
+{
+  "name": "basicagent",
+  "version": "1.0.0",
+  "description": "A small, dependency-free command line agent with file tools, skills and OpenAI-compatible LLM providers.",
+  "type": "module",
+  "bin": {
+    "basicagent": "bin/basicagent.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:live": "node --test test/live/*.test.mjs"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "ollama",
+    "openai-compatible",
+    "tools"
+  ],
+  "license": "GPL-3.0-or-later",
+  "private": true
+}

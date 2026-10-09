@@ -1,0 +1,94 @@
+# basicagent
+
+A small, dependency-free command line agent. It runs an OpenAI-compatible
+model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
+file tools, shell access, SKILL.md skills and persistent memory.
+
+
+```
+$ basicagent
+basicagent> add a timeout option to src/provider.mjs and run the tests
+[tool] read_file {"path":"src/provider.mjs"}
+[tool] edit_file {"path":"src/provider.mjs","old_string":"...","new_string":"..."}
+[tool] run_command {"command":"npm","args":["test"]}
+...
+Done: added provider.timeoutMs handling and all 45 tests pass.
+```
+
+## Features
+
+- **Any OpenAI-compatible provider** — local Ollama, Ollama Cloud, llama.cpp,
+  DeepSeek, OpenAI. Configure `baseUrl`, `model` and an API-key environment
+  variable.
+- **Agent loop with limits** — iteration cap, repeated-failure circuit breaker,
+  context trimming, Ctrl+C abort.
+- **File tools** — read, write, edit, append, list, rename, with a
+  root-based access policy (`rw` / `ro` / `approval` / `deny`), symlink-safe
+  path checks and protected paths.
+- **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
+  format used by Omarchy/Claude-style skill directories.
+- **Persistent memory** — facts and conversation text in plain JSONL under
+  `~/.local/share/basicagent` (configurable via `memory.dir`); resume with
+  `--continue` or `--session`.
+- **Interactive and scriptable** — REPL for conversation, one-shot mode for
+  automation, `--json` event stream for embedding.
+- **Guardrails you can see** — approval prompts, an append-only
+  `audit.jsonl`, bounded outputs and a shell tool that is off by default.
+- **Zero dependencies** — Node 24+ built-ins only.
+
+## Quick start
+
+```sh
+# local Ollama (default)
+node bin/basicagent.mjs "list the files here and summarize the project"
+
+# Ollama Cloud
+BASICAGENT_BASE_URL=https://ollama.com/v1 \
+BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
+node bin/basicagent.mjs --model gemma4:31b "say hello"
+```
+
+Then copy `config.example.json` to `~/.config/basicagent/config.json` to make
+it permanent. Full provider recipes and configuration are in the
+[tutorial](docs/TUTORIAL.md).
+
+## Documentation
+
+- [docs/TUTORIAL.md](docs/TUTORIAL.md) — setup, providers, usage, skills,
+  guardrails, troubleshooting.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized,
+  the turn lifecycle, and how to add tools/providers/skills.
+- `skills/example/SKILL.md` — skill template.
+- Source files carry explanatory comments throughout.
+
+## CLI summary
+
+```
+basicagent [options] [prompt]
+
+  --config <file>   config file (default ~/.config/basicagent/config.json)
+  --cwd <dir>       working directory for this run
+  --model <name>    override the model
+  --base-url <url>  override the provider URL
+  --continue        resume the most recent session
+  --session <id>    use a named session
+  --ephemeral       disable memory for this run
+  --json            JSON-lines event output (for scripts)
+  --yes             auto-approve guarded actions in one-shot mode (dangerous)
+```
+
+## Development
+
+```sh
+npm test           # offline tests, fake provider, no network
+npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
+```
+
+## License
+
+GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
+
+basicagent is an independent, from-scratch implementation. Its design borrows
+patterns (skill format, tool registry shape, guardrail philosophy) from
+[O.M.A.](https://github.com/komagata/oma), which is MIT licensed; no O.M.A.
+code is included.
