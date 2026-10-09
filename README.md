@@ -102,7 +102,7 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
 
-basicagent is an independent, from-scratch implementation. Its design borrows
-patterns (skill format, tool registry shape, guardrail philosophy) from
-[O.M.A.](https://github.com/komagata/oma), which is MIT licensed; no O.M.A.
-code is included.
+basicagent is an independent, from-scratch implementation. All code in this
+repository was written for this project; its design follows patterns common to
+tool-using agents, such as skill files, schema-validated tool registries and
+approval-based guardrails.
