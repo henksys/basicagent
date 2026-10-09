@@ -5,9 +5,10 @@ model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
 file tools, shell access, SKILL.md skills and persistent memory.
 
 ## Requirements
-it only requires Node ≥24 (declared in package.json engines)
 
-## Testing
+It only requires Node 24 or newer (declared in `package.json` engines).
+
+## Example
 
 ```
 $ basicagent
@@ -16,7 +17,7 @@ basicagent> add a timeout option to src/provider.mjs and run the tests
 [tool] edit_file {"path":"src/provider.mjs","old_string":"...","new_string":"..."}
 [tool] run_command {"command":"npm","args":["test"]}
 ...
-Done: added provider.timeoutMs handling and all 45 tests pass.
+Done: added provider.timeoutMs handling and all 48 tests pass.
 ```
 
 ## Features
@@ -92,5 +93,7 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
 
-basicagent is an independent, from-scratch implementation. Its design with
-patterns like skill format, tool registry shape and guardrail philosophy. 
+basicagent is an independent, from-scratch implementation. Its design borrows
+patterns (skill format, tool registry shape, guardrail philosophy) from
+[O.M.A.](https://github.com/komagata/oma), which is MIT licensed; no O.M.A.
+code is included.
