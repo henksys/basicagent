@@ -199,6 +199,11 @@ Instructions for the model, in markdown.
 - `discoverSkills` scans every path in `skills.paths` for `<name>/SKILL.md`
   (or a direct path to a `SKILL.md`). Missing paths are ignored; broken files
   never prevent startup; earlier paths win on duplicate names.
+- `loadConfig` always appends `BUNDLED_SKILLS_DIR` — the project's own
+  `skills/` directory, resolved from `src/config.mjs` — after the configured
+  paths. This keeps the bundled `basicagent` self-help skill and the `example`
+  template available no matter which directory basicagent runs in, including
+  when a user config replaces `skills.paths` entirely.
 - Symlinked skill directories are followed, which is how many agents
   (including Omarchy's `/usr/share/omarchy/default/agents/skills`) install
   skills.

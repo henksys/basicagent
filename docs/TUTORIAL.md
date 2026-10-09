@@ -98,6 +98,20 @@ BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
 node bin/basicagent.mjs --model gemma4:31b "say hello in one short sentence"
 ```
 
+### Give your agent a different name
+
+The program is always `basicagent`, but the persona the model adopts is yours.
+Set `agent.systemPrompt` (or `agent.systemPromptFile` pointing at a text file)
+to replace the default "You are basicagent, ..." paragraph:
+
+```json
+"agent": { "systemPrompt": "You are Alfred, a concise command line assistant." }
+```
+
+Only the persona paragraph is replaced; the environment, skills and safety
+sections are still appended. The bundled `basicagent` self-help skill also
+follows the configured persona while keeping the program's paths and tooling.
+
 ## 3. Use the REPL
 
 ```sh
@@ -105,10 +119,10 @@ basicagent
 ```
 
 ```
-basicagent 1.0.0
+basicagent 1.1.0
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
-skills    example, omarchy, ...
+skills    basicagent, example, omarchy, ...
 basicagent> read package.json and tell me what scripts it defines
 ```
 
@@ -163,10 +177,20 @@ the full text when the model calls `load_skill`.
 The default skills paths are:
 
 ```
-./skills                             project skills
+./skills                             project skills (relative to your working directory)
 ~/.config/basicagent/skills          your personal skills
 ~/.agents/skills, ~/.claude/skills   where many agents install skills
 ```
+
+In addition, the project's own `skills/` directory is always scanned (resolved
+from the install location, not from your working directory), and it is scanned
+after the paths above, so a skill with the same name in your paths wins. It
+ships two skills:
+
+- `basicagent` — the agent's self-help: its own configuration, memory,
+  guardrails and how to extend it. Ask things like "where is your config
+  stored?" or "how do I add a tool?".
+- `example` — a template showing the `SKILL.md` format.
 
 Since the Omarchy skill lives in `~/.agents/skills` on this machine, it is
 discovered automatically (symlinked directories are followed). To add your

@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseFrontmatter, parseSkillFile, discoverSkills, skillIndexText, loadSkillTool } from '../src/skills.mjs';
+import { BUNDLED_SKILLS_DIR } from '../src/config.mjs';
 
 test('parses plain, folded and literal frontmatter', () => {
   const plain = parseFrontmatter('---\nname: demo\ndescription: One line.\n---\nBody here.\n');
@@ -89,4 +90,12 @@ test('discovery follows symlinked skill directories', () => {
     rmSync(root, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
   }
+});
+
+test('the bundled skills directory contains the basicagent self-help skill', () => {
+  const skills = discoverSkills([BUNDLED_SKILLS_DIR]);
+  assert.ok(skills.has('basicagent'), 'bundled basicagent skill found');
+  assert.match(skills.get('basicagent').description, /configuration/i);
+  assert.ok(skills.has('example'), 'bundled example template found');
+  assert.match(skills.get('basicagent').body, /## Where things live/);
 });

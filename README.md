@@ -31,7 +31,9 @@ Done: added provider.timeoutMs handling and all 48 tests pass.
   root-based access policy (`rw` / `ro` / `approval` / `deny`), symlink-safe
   path checks and protected paths.
 - **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
-  format used by Omarchy/Claude-style skill directories.
+  format used by Omarchy/Claude-style skill directories. Ships a bundled
+  [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
+  agent's own configuration, memory, guardrails and extension process.
 - **Persistent memory** — facts and conversation text in plain JSONL under
   `~/.local/share/basicagent` (configurable via `memory.dir`); resume with
   `--continue` or `--session`.
@@ -63,6 +65,8 @@ it permanent. Full provider recipes and configuration are in the
   guardrails, troubleshooting.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized,
   the turn lifecycle, and how to add tools/providers/skills.
+- [skills/basicagent/SKILL.md](skills/basicagent/SKILL.md) — the bundled
+  self-help skill the agent loads when asked about itself.
 - `skills/example/SKILL.md` — skill template.
 - Source files carry explanatory comments throughout.
 

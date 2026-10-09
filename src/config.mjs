@@ -18,9 +18,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveUserPath } from './util.mjs';
 
 export const ACCESS_LEVELS = ['rw', 'ro', 'approval', 'deny'];
+
+// The project's own skills directory (bundled `basicagent` self-help skill and
+// the `example` template). It is resolved from this module, not from the
+// working directory, and is appended to every skills.paths list in loadConfig
+// so the bundled skills are available no matter where basicagent runs.
+export const BUNDLED_SKILLS_DIR = fileURLToPath(new URL('../skills', import.meta.url));
 
 export const DEFAULTS = Object.freeze({
   provider: {
@@ -198,5 +205,14 @@ export function loadConfig({ flags = {}, env = process.env, cwd = process.cwd() 
     config.provider.apiKey = env[config.provider.apiKeyEnv] || '';
   }
 
-  return normalizeConfig(config, { cwd, configPath: candidate, configFound });
+  const normalized = normalizeConfig(config, { cwd, configPath: candidate, configFound });
+
+  // Always scan the bundled skills too, after the user's paths so a skill of
+  // the same name in the user's paths takes precedence. Appending it here
+  // (instead of in DEFAULTS) keeps it even when the config replaces
+  // skills.paths entirely.
+  if (!normalized.skills.paths.includes(BUNDLED_SKILLS_DIR)) {
+    normalized.skills.paths.push(BUNDLED_SKILLS_DIR);
+  }
+  return normalized;
 }

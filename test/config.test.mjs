@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, deepMerge, defaultConfigPath } from '../src/config.mjs';
+import { loadConfig, deepMerge, defaultConfigPath, BUNDLED_SKILLS_DIR } from '../src/config.mjs';
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), 'basicagent-config-'));
@@ -104,4 +104,28 @@ test('deepMerge merges objects and replaces arrays', () => {
 
 test('defaultConfigPath honors XDG_CONFIG_HOME', () => {
   assert.equal(defaultConfigPath({ XDG_CONFIG_HOME: '/x' }), join('/x', 'basicagent', 'config.json'));
+});
+
+test('the bundled skills directory is always included, after user paths', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ skills: { paths: ['./custom-skills'] } }));
+    const config = loadConfig({ flags: { config: configPath }, env: {}, cwd: dir });
+    assert.equal(config.skills.paths[0], join(dir, 'custom-skills'));
+    assert.equal(config.skills.paths.at(-1), BUNDLED_SKILLS_DIR, 'bundled dir is scanned last so user skills win');
+    assert.equal(config.skills.paths.filter((path) => path === BUNDLED_SKILLS_DIR).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the bundled skills directory is present with default paths too', () => {
+  const dir = tempDir();
+  try {
+    const config = loadConfig({ env: { HOME: dir, XDG_CONFIG_HOME: join(dir, '.config') }, cwd: dir });
+    assert.ok(config.skills.paths.includes(BUNDLED_SKILLS_DIR));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
