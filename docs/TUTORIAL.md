@@ -192,7 +192,7 @@ ships two skills:
   stored?" or "how do I add a tool?".
 - `example` — a template showing the `SKILL.md` format.
 
-Since the Omarchy skill lives in `~/.agents/skills` on this machine, it is
+If for example the Omarchy skill lives in `~/.agents/skills` on your machine, it is
 discovered automatically (symlinked directories are followed). To add your
 own:
 
