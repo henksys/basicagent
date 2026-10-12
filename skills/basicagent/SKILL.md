@@ -8,13 +8,14 @@ description: >
 
 # basicagent self-help
 
-You run inside **basicagent**, a small dependency-free CLI agent that runs an
-OpenAI-compatible model in a tool-calling loop. Node 24+ only, no npm
-dependencies. Version and repository URL are in `package.json`; license is
-GPL-3.0-or-later. "basicagent" is the name of the *program* (binary, config
-paths, tools, this skill). The user may give *you* a different name or persona
-via `agent.systemPrompt` / `agent.systemPromptFile` — follow that persona, but
-keep using the paths and tooling described here.
+You run inside **basicagent**, a small CLI agent that runs an
+OpenAI-compatible model in a tool-calling loop. It also ships a local web
+interface (`basicagent-web`) for chatting, editing settings and browsing
+memory. Node 24+ only, no npm dependencies. Version and repository URL are in
+`package.json`; license is GPL-3.0-or-later. "basicagent" is the name of the
+*program* (binary, config paths, tools, this skill). The user may give *you* a
+different name or persona via `agent.systemPrompt` / `agent.systemPromptFile`
+— follow that persona, but keep using the paths and tooling described here.
 
 ## Where things live
 
@@ -25,7 +26,7 @@ keep using the paths and tooling described here.
 | Facts | `facts.jsonl` — injected into your system prompt on every run |
 | Sessions | `sessions/<id>.jsonl`; `last-session.txt` drives `--continue` |
 | Audit | `audit.jsonl` — one line per tool call |
-| Source | `bin/basicagent.mjs` (CLI), `src/` (loop, provider, tools), `skills/`, `docs/`, `test/` |
+| Source | `bin/basicagent.mjs` (CLI), `bin/basicagent-web.mjs` (web server), `src/` (loop, provider, tools), `src/web/` (server, API, sessions), `web/` (browser UI), `skills/`, `docs/`, `test/` |
 
 Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
 `BASICAGENT_DATA_DIR`.
@@ -66,14 +67,20 @@ Precedence: defaults < config file < environment < CLI flags.
   cookies. Disable it entirely with `tools.web.enabled: false` or `--no-web`.
 - Every tool call is appended to `audit.jsonl`, including approval requests
   and their answers.
+- The web interface (`basicagent-web`) binds to loopback by default. Every
+  `/api` request needs the bearer token printed at startup, and Host/Origin
+  checks block DNS rebinding from other local pages. It writes only the same
+  config file and data directory the CLI uses.
 - One-shot mode denies approval-required actions unless `--yes` is passed;
   `--yes` auto-approves in the REPL as well.
 
 ## Changing yourself
 
 - **Config**: edit the config file with `edit_file` (approval is asked), then
-  `/reload` in the REPL applies it; one-shot runs read it on next start. Never
-  claim a config change took effect without a reload or restart.
+  `/reload` in the REPL applies it; one-shot runs read it on next start. The
+  web interface's Settings tab edits the same file, validating the values and
+  live-reloading every session on save. Never claim a config change took
+  effect without a reload or restart.
 - **Name/persona**: set `agent.systemPrompt` or `agent.systemPromptFile`;
   the program, paths, tools and skills keep the name basicagent.
 - **Source**: read `docs/ARCHITECTURE.md` first. Add tools in
@@ -87,16 +94,22 @@ Precedence: defaults < config file < environment < CLI flags.
 Facts saved with `remember` appear in every future prompt; `search_memory` finds
 past records and `forget` removes them. `--continue` resumes the last session's
 user/assistant text only (no tool traffic); `--session <id>` pins a named
-conversation; `--ephemeral` disables memory entirely.
+conversation; `--ephemeral` disables memory entirely. The web interface's
+Memory tab lists facts (add and delete), session transcripts and the audit
+log; each web turn re-reads `facts.jsonl` so tabs stay in sync.
 
 ## CLI
 
-REPL: `basicagent`. One-shot: `basicagent "prompt"`. Scripting:
+REPL: `basicagent`. One-shot: `basicagent "prompt"`. Web interface:
+`basicagent-web` (or `npm run web`) serves `http://127.0.0.1:8787` by default;
+`--port`, `--host` and `--token` adjust it. Scripting:
 `basicagent --json "prompt"` emits JSONL events (`assistant_delta`,
-`tool_start`, `tool_end`, `done`, `error`, `approval`). Handy flags:
-`--no-web` (disable web fetch for one run), `--continue`, `--session <id>`,
-`--ephemeral`. REPL commands: `/help /new /reload /skills /tools
-/model [name] /config /quit`.
+`tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
+streams the same events plus `approval_result` and `aborted`; there the
+`approval` event carries an `id` answered with `POST /api/approvals/:id`.
+Handy flags: `--no-web` (disable web fetch for one run), `--continue`,
+`--session <id>`, `--ephemeral`. REPL commands: `/help /new /reload /skills
+/tools /model [name] /config /quit`.
 
 ## Skills
 
@@ -107,5 +120,6 @@ through `load_skill`. This bundled skill lives in the project's
 
 ## Tests
 
-`npm test` is offline (fake provider). `npm run test:live` is an opt-in Ollama
-Cloud integration test and needs `OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).
+`npm test` is offline (fake provider; 104 tests including the web server).
+`npm run test:live` is an opt-in Ollama Cloud integration test and needs
+`OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).

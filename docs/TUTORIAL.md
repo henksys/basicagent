@@ -29,7 +29,8 @@ node bin/basicagent.mjs "list the files in this directory and summarize the proj
 ```
 
 Without configuration basicagent expects a local Ollama at
-`http://localhost:11434/v1`. Pick a provider recipe below.
+`http://localhost:11434/v1`. Pick a provider recipe below, or jump to the
+web interface in section 4 if you prefer a browser.
 
 ## 2. Pick a provider
 
@@ -148,7 +149,39 @@ Commands:
 
 Ctrl+C cancels the running turn, not the program.
 
-## 4. One-shot and scripting
+## 4. Use the web interface
+
+basicagent also ships a browser interface for the same agent:
+
+```sh
+node bin/basicagent-web.mjs     # or: npm run web
+```
+
+It listens on `127.0.0.1:8787` by default and prints a URL that includes an
+access token in the fragment; open that URL (the token is required for every
+API request, and the unlock screen accepts it too). The interface has three
+tabs:
+
+- **Chat** — sessions in a collapsible sidebar, streamed answers, every tool
+  call with its arguments and result, and approve/deny buttons when a guarded
+  action asks. Stop cancels the running turn and closing the tab aborts it.
+  It uses the same sessions as the CLI, so you can switch between the two.
+- **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
+  agent limits, file roots, shell, web tool, skills, memory). Saving validates
+  the values, writes the file and live-reloads the running agent. The API key
+  is masked and never sent to the browser; leave the field empty to keep it.
+- **Memory** — the facts from `facts.jsonl` (view, add, delete), session
+  transcripts and the audit log with filters.
+
+Options: `--port <number>` (default 8787), `--host <address>` (default
+`127.0.0.1`) and `--token <string>` (default: random, printed at startup).
+The server binds to loopback unless you pass a non-loopback `--host`. Every
+`/api` request needs the bearer token, and Host/Origin checks reject
+DNS-rebinding attempts from other local pages. There are no cookies (the
+token lives in the URL fragment and `sessionStorage`), and everything the
+agent renders is inserted as text, never HTML.
+
+## 5. One-shot and scripting
 
 ```sh
 # Answer on stdout, tool trace on stderr:
@@ -163,12 +196,14 @@ basicagent --json "read README.md and return its first heading" | jq -c '.type'
 
 `--json` emits one JSON object per line: `assistant_delta`, `tool_start`,
 `tool_end`, `done`, `error`, `approval`. The final answer is the `done` event.
-Exit code is 0 on success and 1 on failure.
+Exit code is 0 on success and 1 on failure. The web interface streams the same
+events plus `approval_result` and `aborted`; there the `approval` event carries
+an `id` that is answered with `POST /api/approvals/:id`.
 
 One-shot mode never waits for approval. Actions that need approval are denied
 unless you pass `--yes` (only do that in trusted, non-interactive contexts).
 
-## 5. Skills
+## 6. Skills
 
 Skills are folders with a `SKILL.md` (frontmatter + markdown instructions).
 basicagent injects only their name and description into the prompt and loads
@@ -214,7 +249,7 @@ EOF
 Then `/reload` in the REPL (or just start a new run). See
 `skills/example/SKILL.md` for a fuller template.
 
-## 6. Guardrails
+## 7. Guardrails
 
 ```json
 "tools": {
@@ -259,7 +294,7 @@ Then `/reload` in the REPL (or just start a new run). See
 - Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`,
   including approval requests and their answers.
 
-## 7. Memory
+## 8. Memory
 
 basicagent saves long-term facts (via the `remember` tool) and user/assistant
 text per conversation session under `$XDG_DATA_HOME/basicagent` (falling back
@@ -293,7 +328,7 @@ Ask the agent to "remember that I prefer tabs" and it stores a fact; ask it to
 only user/assistant text, not tool traffic. Everything is plain JSONL — grep
 or delete files directly if you prefer.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -311,7 +346,7 @@ or delete files directly if you prefer.
 | `Unsupported content type` when fetching | Only html, xhtml, xml, plain, markdown and JSON are accepted. |
 | Timeouts on slow models | Raise `provider.timeoutMs`. |
 
-## 9. Tests
+## 10. Tests
 
 ```sh
 npm test          # offline suite, no network
