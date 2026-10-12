@@ -51,17 +51,22 @@ Precedence: defaults < config file < environment < CLI flags.
 ## Guardrails (enforced in code, not just by policy)
 
 - File paths must fall inside a configured root; symlink escapes are blocked.
-- Writes inside `protectedPaths` — and always your own config file — require
-  approval (when that file is inside an allowed root).
+  When roots overlap, the most specific matching root decides the access level.
+- Writes inside `protectedPaths` — and always your own config file and the
+  memory data directory (`audit.jsonl`, facts, sessions) — require approval
+  (when the path is inside an allowed root).
 - `run_command` is off by default. When enabled, every call is shown and needs
   approval; approving a command is full trust, because a command can write
   anywhere.
 - `fetch_url` is read-only and enabled by default: it refuses private or
-  reserved network addresses (including after redirects), and always treats
+  reserved network addresses (including after redirects and non-canonical IPv6
+  forms) and pins the connection to the validated addresses. It always treats
   fetched content as untrusted data. It does not run JavaScript and sends no
   cookies. Disable it entirely with `tools.web.enabled: false` or `--no-web`.
-- Every tool call is appended to `audit.jsonl`.
-- One-shot mode denies approval-required actions unless `--yes` is passed.
+- Every tool call is appended to `audit.jsonl`, including approval requests
+  and their answers.
+- One-shot mode denies approval-required actions unless `--yes` is passed;
+  `--yes` auto-approves in the REPL as well.
 
 ## Changing yourself
 

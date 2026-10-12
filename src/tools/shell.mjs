@@ -54,15 +54,17 @@ export function shellTools({ config, cwd }) {
         let workdir = cwd;
         if (requestedCwd !== undefined) {
           const check = await checkAccess({ config, cwd, input: requestedCwd });
-          const stats = await stat(check.absolute).catch(() => null);
-          if (!stats?.isDirectory()) throw new Error(`Working directory not found: ${check.absolute}`);
-          workdir = check.absolute;
+          const stats = await stat(check.real).catch(() => null);
+          if (!stats?.isDirectory()) throw new Error(`Working directory not found: ${check.real}`);
+          workdir = check.real;
         }
 
-        const line = [command, ...args].join(' ');
+        // Collapse whitespace so extra spaces cannot slip a denied word past
+        // the comparison. Still an accident brake, not a sandbox.
+        const line = [command, ...args].join(' ').replace(/\s+/g, ' ').trim();
         const lower = line.toLowerCase();
         for (const denied of settings.denylist) {
-          if (lower.includes(String(denied).toLowerCase())) {
+          if (lower.includes(String(denied).toLowerCase().replace(/\s+/g, ' ').trim())) {
             throw new Error(`Command matches the configured denylist entry "${denied}" and was refused`);
           }
         }

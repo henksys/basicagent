@@ -138,7 +138,7 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (!Number.isInteger(provider.maxTokens) || provider.maxTokens <= 0) throw new Error('provider.maxTokens must be a positive integer');
   if (!Number.isInteger(provider.timeoutMs) || provider.timeoutMs <= 0) throw new Error('provider.timeoutMs must be a positive integer');
   if (provider.toolChoice !== null && !['auto', 'required', 'none'].includes(provider.toolChoice)) throw new Error('provider.toolChoice must be null, "auto", "required" or "none"');
-  if (!provider.apiKey && provider.apiKeyEnv && typeof provider.apiKeyEnv !== 'string') throw new Error('provider.apiKeyEnv must be a string');
+  if (provider.apiKeyEnv !== null && provider.apiKeyEnv !== undefined && typeof provider.apiKeyEnv !== 'string') throw new Error('provider.apiKeyEnv must be a string');
 
   const agent = config.agent;
   if (!Number.isInteger(agent.maxIterations) || agent.maxIterations < 1) throw new Error('agent.maxIterations must be a positive integer');

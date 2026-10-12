@@ -6,20 +6,23 @@
 //   1. Safe by default. Private, loopback, link-local and other reserved
 //      addresses are refused after DNS resolution (SSRF protection), and every
 //      redirect hop is re-checked the same way. Domain deny/allow lists apply.
+//      The connection is pinned to the addresses that passed the check, so a
+//      second DNS answer cannot redirect it (no rebinding TOCTOU).
 //   2. Bounded. The raw response is streamed and capped, then the sanitized
 //      text is capped again, so a huge page cannot flood memory or context.
-//   3. Dependency-free. Native fetch, dns, TextDecoder and regex-based
+//   3. Dependency-free. Node's http/https, dns, TextDecoder and regex-based
 //      HTML-to-text extraction. The extraction is best-effort, not a parser.
 //
 // Known limitations (documented in docs/ARCHITECTURE.md):
 //   - regex HTML handling can leak markup on pathological HTML
-//   - DNS resolution and the actual connection are not pinned (TOCTOU)
 //   - no JavaScript rendering, no cookies or authentication, no robots.txt
 //
 // The tool is omitted entirely when tools.web.enabled is false.
 
 import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { BlockList, isIP } from 'node:net';
 import pkg from '../../package.json' with { type: 'json' };
 import { bounded } from '../util.mjs';
 
@@ -60,19 +63,19 @@ export function webTools({ config }) {
 
         for (;;) {
           assertUrlAllowed(current, settings);
-          await assertHostAllowed(current, settings);
+          const addresses = await assertHostAllowed(current, settings);
 
           const timeout = AbortSignal.timeout(settings.timeoutMs);
           const signal = ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout;
 
           let response;
           try {
-            response = await fetch(current, {
-              redirect: 'manual',
+            response = await httpGet(current, {
               headers: {
                 'user-agent': userAgent,
                 accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.8,text/markdown;q=0.8,*/*;q=0.1'
               },
+              lookup: pinnedLookup(addresses),
               signal
             });
           } catch (error) {
@@ -81,26 +84,26 @@ export function webTools({ config }) {
             throw new Error(`Could not fetch ${current.href}: ${error.message}`);
           }
 
-          if (REDIRECT_CODES.has(response.status)) {
-            const location = response.headers.get('location');
-            await response.body?.cancel().catch(() => {});
-            if (!location) throw new Error(`HTTP ${response.status} without a Location header`);
+          if (REDIRECT_CODES.has(response.statusCode)) {
+            const location = response.headers.location;
+            response.destroy();
+            if (!location) throw new Error(`HTTP ${response.statusCode} without a Location header`);
             if (++redirects > settings.maxRedirects) throw new Error(`Too many redirects (limit ${settings.maxRedirects})`);
-            const next = new URL(location, current);
+            const next = new URL(Array.isArray(location) ? location[0] : location, current);
             if (!['http:', 'https:'].includes(next.protocol)) throw new Error(`Redirect to unsupported protocol: ${next.protocol}`);
             current = next;
             continue;
           }
 
-          if (!response.ok) {
-            await response.body?.cancel().catch(() => {});
-            throw new Error(`HTTP ${response.status} ${response.statusText} for ${current.href}`);
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            response.destroy();
+            throw new Error(`HTTP ${response.statusCode} ${response.statusMessage || ''}`.trim() + ` for ${current.href}`);
           }
 
-          const contentType = (response.headers.get('content-type') || '').toLowerCase();
+          const contentType = (response.headers['content-type'] || '').toLowerCase();
           const kind = classifyContentType(contentType);
           if (!kind) {
-            await response.body?.cancel().catch(() => {});
+            response.destroy();
             throw new Error(`Unsupported content type: ${contentType || '(missing)'}`);
           }
 
@@ -114,7 +117,7 @@ export function webTools({ config }) {
           return {
             url: rawUrl,
             finalUrl: current.href,
-            status: response.status,
+            status: response.statusCode,
             contentType,
             charset,
             bytes: Buffer.byteLength(capped),
@@ -136,7 +139,7 @@ export function assertUrlAllowed(url, settings) {
   if (url.username || url.password) throw new Error('URLs with embedded credentials are not supported');
   if (!url.hostname) throw new Error('URL must include a hostname');
 
-  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
   if (host === 'localhost' || host.endsWith('.localhost')) throw new Error(`Blocked host: ${host}`);
 
   if (settings.denyDomains.some((pattern) => domainMatches(pattern, host))) {
@@ -148,22 +151,27 @@ export function assertUrlAllowed(url, settings) {
 }
 
 // "example.com" matches example.com and any subdomain; "*.example.com" adds
-// the apex domain too, which keeps the common pattern unsurprising.
+// the apex domain too, which keeps the common pattern unsurprising. A single
+// trailing dot (the DNS root, e.g. "example.com.") is ignored on both sides so
+// it cannot be used to slip past a deny list.
 export function domainMatches(pattern, host) {
-  const clean = String(pattern).toLowerCase().trim().replace(/^\./, '');
+  const clean = String(pattern).toLowerCase().trim().replace(/^\./, '').replace(/\.$/, '');
   if (!clean) return false;
-  const bare = clean.startsWith('*.') ? clean.slice(2) : clean;
-  return host === bare || host.endsWith(`.${bare}`);
+  const bare = (clean.startsWith('*.') ? clean.slice(2) : clean).replace(/\.$/, '');
+  const name = String(host).toLowerCase().replace(/\.$/, '');
+  return name === bare || name.endsWith(`.${bare}`);
 }
 
 // Resolve the hostname and refuse private/reserved addresses unless the
-// config explicitly allows them. Literal IPs are checked directly.
+// config explicitly allows them. Literal IPs are checked directly. Returns the
+// validated addresses so the caller can pin the connection to them.
 export async function assertHostAllowed(url, settings) {
   const host = url.hostname.replace(/^\[|\]$/g, '');
 
-  if (isIP(host)) {
+  const literal = isIP(host);
+  if (literal) {
     if (!settings.allowPrivate && isPrivateAddress(host)) throw new Error(`Blocked private or reserved address: ${host}`);
-    return;
+    return [{ address: host, family: literal }];
   }
 
   let addresses;
@@ -177,38 +185,99 @@ export async function assertHostAllowed(url, settings) {
     const blocked = addresses.find(({ address }) => isPrivateAddress(address));
     if (blocked) throw new Error(`Host ${host} resolves to a private or reserved address (${blocked.address}) and is blocked`);
   }
+  return addresses.map(({ address, family }) => ({ address, family }));
 }
 
-// Check an IP string against the ranges a web fetcher must never reach:
-// loopback, RFC1918, link-local (including cloud metadata 169.254.169.254),
-// CGNAT, unspecified, multicast, TEST-NETs, ULA and IPv6 link-local.
-export function isPrivateAddress(ip) {
-  let address = String(ip).toLowerCase().trim();
-  if (address.startsWith('::ffff:')) address = address.slice(7);
+// A lookup callback for http/https that only ever returns addresses already
+// validated by assertHostAllowed. This closes the DNS-rebinding window: the
+// name is resolved once for the policy check, and the connection reuses that
+// exact answer instead of resolving again.
+export function pinnedLookup(addresses) {
+  return (hostname, options, callback) => {
+    const family = typeof options === 'object' && options ? options.family : 0;
+    const allowed = family === 4 || family === 6 ? addresses.filter((entry) => entry.family === family) : addresses;
+    if (allowed.length === 0) return callback(new Error(`No allowed address for ${hostname}`));
+    if (options && options.all) return callback(null, allowed);
+    return callback(null, allowed[0].address, allowed[0].family);
+  };
+}
 
-  const version = isIP(address);
-  if (version === 4) {
-    const parts = address.split('.').map(Number);
-    const [a, b, c] = parts;
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
-    if (a === 198 && b === 51 && c === 100) return true;
-    if (a === 203 && b === 0 && c === 113) return true;
-    if (a >= 224) return true;
-    return false;
+// One GET request through node:http/https with the pinned lookup.
+function httpGet(url, { headers, lookup, signal }) {
+  return new Promise((resolve, reject) => {
+    const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = requestFn(url, { method: 'GET', headers, lookup, signal }, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// Ranges a web fetcher must never reach: loopback, RFC1918, link-local
+// (including cloud metadata 169.254.169.254), CGNAT, unspecified, multicast,
+// TEST-NETs, ULA and IPv6 link-local. Checked with net.BlockList, which parses
+// and canonicalizes the address instead of comparing strings.
+const PRIVATE_V4 = new BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
+  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
+  ['192.88.99.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24],
+  ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]
+]) {
+  PRIVATE_V4.addSubnet(address, prefix, 'ipv4');
+}
+
+const PRIVATE_V6 = new BlockList();
+for (const [address, prefix] of [
+  ['::', 128], ['::1', 128], ['::', 96], ['64:ff9b::', 96], ['64:ff9b:1::', 48],
+  ['100::', 64], ['2001::', 32], ['2001:db8::', 32], ['2002::', 16],
+  ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]
+]) {
+  PRIVATE_V6.addSubnet(address, prefix, 'ipv6');
+}
+
+// Expand an IPv6 address into its 8 hextets, or null when unparseable.
+function expandIPv6(address) {
+  let text = String(address).toLowerCase().trim();
+  const dotted = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(text);
+  if (dotted) {
+    const octets = dotted[1].split('.').map(Number);
+    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    text = `${text.slice(0, dotted.index)}${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
   }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : null;
+  if (tail === null ? head.length !== 8 : head.length + tail.length >= 8) return null;
+  const groups = tail === null ? head : [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail];
+  const hextets = groups.map((group) => (/^[0-9a-f]{1,4}$/.test(group) ? parseInt(group, 16) : NaN));
+  return hextets.some(Number.isNaN) ? null : hextets;
+}
+
+// IPv4-mapped (::ffff:a.b.c.d) and IPv4-translated (::ffff:0:a.b.c.d)
+// addresses carry an embedded IPv4 address; return it as dotted-quad text.
+// Those are the only ::ffff-prefixed forms; other v4-in-v6 forms are blocked
+// by the reserved ranges above (NAT64, 6to4, Teredo).
+function embeddedIPv4(hextets) {
+  if (hextets[0] !== 0 || hextets[1] !== 0 || hextets[2] !== 0 || hextets[3] !== 0) return null;
+  const mapped = hextets[4] === 0 && hextets[5] === 0xffff;
+  const translated = hextets[4] === 0xffff && hextets[5] === 0;
+  if (!mapped && !translated) return null;
+  return `${hextets[6] >> 8}.${hextets[6] & 0xff}.${hextets[7] >> 8}.${hextets[7] & 0xff}`;
+}
+
+// Check an IP string against the ranges a web fetcher must never reach.
+// Anything that does not parse as an address is refused as well.
+export function isPrivateAddress(ip) {
+  const address = String(ip).toLowerCase().trim();
+  const version = isIP(address);
+  if (version === 4) return PRIVATE_V4.check(address, 'ipv4');
   if (version === 6) {
-    if (address === '::' || address === '::1') return true;
-    if (address.startsWith('fc') || address.startsWith('fd')) return true;
-    if (/^fe[89ab]/.test(address)) return true;
-    if (address.startsWith('ff')) return true;
-    return false;
+    const hextets = expandIPv6(address);
+    if (!hextets) return true;
+    const embedded = embeddedIPv4(hextets);
+    if (embedded) return PRIVATE_V4.check(embedded, 'ipv4');
+    return PRIVATE_V6.check(address, 'ipv6');
   }
   // Not an IP at all: refuse rather than guess.
   return true;
@@ -225,22 +294,17 @@ function classifyContentType(contentType) {
   return null;
 }
 
-// Stream the body, keeping at most maxBytes and cancelling the rest.
-async function readBounded(response, maxBytes) {
-  const reader = response.body?.getReader();
-  if (!reader) return { buffer: Buffer.alloc(0), truncated: false };
-
+// Stream the body, keeping at most maxBytes and abandoning the rest. Breaking
+// out of the loop destroys the underlying IncomingMessage.
+async function readBounded(stream, maxBytes) {
   const chunks = [];
   let size = 0;
   let truncated = false;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  for await (const value of stream) {
     if (!value?.length) continue;
     if (size + value.length > maxBytes) {
-      chunks.push(Buffer.from(value.subarray(0, maxBytes - size)));
+      chunks.push(value.subarray(0, maxBytes - size));
       truncated = true;
-      await reader.cancel().catch(() => {});
       break;
     }
     chunks.push(Buffer.from(value));

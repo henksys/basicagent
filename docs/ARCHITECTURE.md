@@ -170,13 +170,16 @@ Every file path is resolved and authorized by `checkAccess` in
 `src/tools/files.mjs`:
 
 1. `~` expands; relative paths resolve against the working directory.
-2. `softRealpath` resolves the path (or its nearest existing parent) so
-   symlinks cannot escape a root.
-3. The path must be inside one of `tools.files.roots`; the **first matching
-   root** decides the access level:
+2. `softRealpath` resolves the path (or its nearest existing parent, following
+   dangling symlinks explicitly) so symlinks cannot escape a root.
+3. The path must be inside one of `tools.files.roots`; the **most specific
+   matching root** (the longest resolved root path) decides the access level:
    `rw` (free), `ro` (read only), `approval` (writes ask), `deny` (refuse).
+   This keeps a broad root from silently shadowing a narrower restrictive one,
+   regardless of config order.
 4. Writes inside `tools.files.protectedPaths` — and always inside the active
-   config file — require approval even in an `rw` root.
+   config file and the memory data directory (`memory.dir`, which holds facts,
+   sessions and `audit.jsonl`) — require approval even in an `rw` root.
 
 Paths outside every root are refused with an error the model can read.
 
@@ -197,12 +200,18 @@ request — including each redirect hop — passes the same checks:
 3. **Addresses**: the hostname is resolved with `dns.lookup({all:true})` and
    refused when any result is private or reserved: loopback, RFC 1918, CGNAT,
    link-local (including the `169.254.169.254` cloud metadata address),
-   TEST-NETs, multicast, ULA and IPv6 link-local. `tools.web.allowPrivate`
-   disables this and is meant only for trusted local testing.
-4. **Bounds**: `redirect: 'manual'` with at most `maxRedirects` hops; the body
-   is streamed with a `maxRawBytes` cap (the rest is cancelled); the sanitized
-   text is capped at `maxBytes` and flagged `truncated`.
-5. **Content**: only text/html, xhtml+xml, xml, plain, markdown and JSON are
+   TEST-NETs, multicast, ULA, IPv6 link-local, NAT64, 6to4, Teredo and
+   IPv4-compatible ranges. Classification uses `net.BlockList`, so expanded
+   and mapped IPv6 forms are handled. `tools.web.allowPrivate` disables this
+   and is meant only for trusted local testing.
+4. **Pinning**: `http`/`https` requests use a custom
+   [`lookup`](https://nodejs.org/api/net.html#socketsocketconnect) that returns
+   only the addresses validated in step 3, so the connection cannot be pointed
+   elsewhere by a second DNS answer (no rebinding TOCTOU).
+5. **Bounds**: redirects are followed manually, at most `maxRedirects` hops;
+   the body is streamed with a `maxRawBytes` cap (the rest is abandoned); the
+   sanitized text is capped at `maxBytes` and flagged `truncated`.
+6. **Content**: only text/html, xhtml+xml, xml, plain, markdown and JSON are
    accepted. Charset comes from the Content-Type header or a `<meta charset>`
    sniff and is decoded with `TextDecoder`.
 
@@ -213,11 +222,10 @@ then `head|script|style|noscript|template|svg|iframe`, then a `<main>` or
 are decoded in a single pass (no double decoding of `&amp;lt;`).
 
 Deliberate limitations: regex handling is best-effort and can leak markup on
-pathological HTML; DNS resolution and the actual connection are not pinned, so
-a determined DNS-rebinding attack is out of scope (TOCTOU); there is no
-JavaScript rendering, no cookie/auth support and no robots.txt handling.
-Setting `tools.web.enabled: false` (or `--no-web`) removes the tool from the
-schema entirely; `approval: "always"` asks for a y/N before each fetch.
+pathological HTML; there is no JavaScript rendering, no cookie/auth support and
+no robots.txt handling. Setting `tools.web.enabled: false` (or `--no-web`)
+removes the tool from the schema entirely; `approval: "always"` asks for a y/N
+before each fetch.
 
 ## Skills
 
@@ -259,7 +267,7 @@ Under `memory.dir` (default `~/.local/share/basicagent`, mode `0700`):
 | `facts.jsonl` | `{"key","value","at"}` per line, rewritten atomically. |
 | `sessions/<id>.jsonl` | `{"ts","role","content"}` per user/assistant message. |
 | `last-session.txt` | session id used by `--continue`. |
-| `audit.jsonl` | every tool call: `{ts, tool, args, ok, error, durationMs}`. |
+| `audit.jsonl` | every tool call: `{ts, tool, args, ok, error, durationMs, approvals}`. |
 
 Resuming replays only user/assistant text; tool traffic is not replayed.
 `forget` rewrites facts and session files to remove matching lines.

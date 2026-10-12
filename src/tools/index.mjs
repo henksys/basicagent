@@ -11,7 +11,9 @@
 // which keeps weak local models from silently doing the wrong thing.
 //
 // Every executed call is appended to audit.jsonl in the data directory:
-//   { ts, tool, args (bounded), ok, error, durationMs }
+//   { ts, tool, args (bounded), ok, error, durationMs, approvals }
+// Approval requests made during the call are recorded with their answer, and
+// an audit write that fails is reported once instead of silently dropped.
 
 import { mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -63,7 +65,7 @@ export function validateArgs(schema, args) {
   }
 }
 
-export function createRegistry({ config, memory, skills, cwd }) {
+export function createRegistry({ config, memory, skills, cwd, onAuditError = () => {} }) {
   const tools = new Map();
   const add = (tool) => {
     if (tools.has(tool.name)) throw new Error(`Duplicate tool name: ${tool.name}`);
@@ -78,6 +80,7 @@ export function createRegistry({ config, memory, skills, cwd }) {
 
   const auditPath = memory && config.memory.enabled ? join(memory.dir, 'audit.jsonl') : null;
   let auditReady = false;
+  let auditFailed = false;
 
   async function audit(entry) {
     if (!auditPath) return;
@@ -87,8 +90,13 @@ export function createRegistry({ config, memory, skills, cwd }) {
         auditReady = true;
       }
       await appendFile(auditPath, JSON.stringify(entry) + '\n', { mode: 0o600 });
-    } catch {
-      // Auditing must never break a tool call.
+    } catch (error) {
+      // Auditing must never break a tool call, but a broken audit log is worth
+      // reporting: without it there is no record of what the agent did.
+      if (!auditFailed) {
+        auditFailed = true;
+        onAuditError(`Could not write the audit log (${error.message}); tool calls will not be recorded.`);
+      }
     }
   }
 
@@ -111,12 +119,22 @@ export function createRegistry({ config, memory, skills, cwd }) {
       if (!tool) throw new Error(`Unknown tool "${name}". Available tools: ${[...tools.keys()].join(', ')}`);
       validateArgs(tool.parameters, args);
       const started = Date.now();
+      const approvals = [];
+      const baseApprove = typeof ctx?.approve === 'function' ? ctx.approve : async () => false;
+      const wrappedCtx = {
+        ...ctx,
+        approve: async (description) => {
+          const approved = await baseApprove(description);
+          approvals.push({ description: bounded(description, 500), approved });
+          return approved;
+        }
+      };
       try {
-        const result = await tool.run(args, ctx);
-        audit({ ts: new Date().toISOString(), tool: name, args: previewJSON(args, 2000), ok: true, durationMs: Date.now() - started });
+        const result = await tool.run(args, wrappedCtx);
+        await audit({ ts: new Date().toISOString(), tool: name, args: previewJSON(args, 2000), ok: true, durationMs: Date.now() - started, approvals });
         return result;
       } catch (error) {
-        audit({ ts: new Date().toISOString(), tool: name, args: previewJSON(args, 2000), ok: false, error: bounded(error.message, 500), durationMs: Date.now() - started });
+        await audit({ ts: new Date().toISOString(), tool: name, args: previewJSON(args, 2000), ok: false, error: bounded(error.message, 500), durationMs: Date.now() - started, approvals });
         throw error;
       }
     }

@@ -87,6 +87,27 @@ test('symlinks cannot escape a root', async (t) => {
   await assert.rejects(() => tools.get('write_file').run({ path: 'rootA/escape/new.txt', content: 'x' }, ctx), /outside the configured file roots/);
 });
 
+test('dangling symlinks to outside targets cannot be written through', async (t) => {
+  const { base, tools } = makeSandbox();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const { ctx } = makeContext();
+  symlinkSync(join(base, 'outside-dir', 'newfile.txt'), join(base, 'rootA', 'dangling'));
+  await assert.rejects(
+    () => tools.get('write_file').run({ path: 'rootA/dangling', content: 'escaped' }, ctx),
+    /outside the configured file roots/
+  );
+  assert.ok(!existsSync(join(base, 'outside-dir', 'newfile.txt')));
+});
+
+test('dangling symlinks that stay inside a root still work', async (t) => {
+  const { base, tools } = makeSandbox();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const { ctx } = makeContext();
+  symlinkSync(join(base, 'rootA', 'real.txt'), join(base, 'rootA', 'inside-dangling'));
+  await tools.get('write_file').run({ path: 'rootA/inside-dangling', content: 'ok' }, ctx);
+  assert.equal(readFileSync(join(base, 'rootA', 'real.txt'), 'utf8'), 'ok');
+});
+
 test('read-only roots allow reads but refuse writes', async (t) => {
   const { base, tools } = makeSandbox();
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -190,4 +211,72 @@ test('checkAccess reports approval requirements to callers', async (t) => {
   assert.equal(normal.requiresApproval, false);
   const guarded = await checkAccess({ config, cwd: base, input: 'rootC/y.txt', write: true });
   assert.equal(guarded.requiresApproval, true);
+});
+
+test('the most specific matching root decides the access level', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'basicagent-specific-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  mkdirSync(join(base, 'wide', 'narrow'), { recursive: true });
+  writeFileSync(join(base, 'wide', 'open.txt'), 'open');
+  const configPath = join(base, 'config.json');
+  writeFileSync(configPath, JSON.stringify({
+    tools: {
+      files: {
+        // The broad rw root is listed first: it must not shadow the deny root.
+        roots: [
+          { path: 'wide', access: 'rw' },
+          { path: 'wide/narrow', access: 'deny' }
+        ]
+      }
+    },
+    memory: { enabled: false }
+  }));
+  const config = loadConfig({ flags: { config: configPath }, env: {}, cwd: base });
+  const tools = new Map(fileTools({ config, cwd: base }).map((tool) => [tool.name, tool]));
+  const { ctx } = makeContext();
+
+  const read = await tools.get('read_file').run({ path: 'wide/open.txt' }, ctx);
+  assert.match(read.text, /open/);
+  await assert.rejects(() => tools.get('read_file').run({ path: 'wide/narrow/x.txt' }, ctx), /denied by policy/);
+  await assert.rejects(() => tools.get('write_file').run({ path: 'wide/narrow/x.txt', content: 'x' }, ctx), /denied by policy/);
+});
+
+test('the memory data directory requires approval for writes', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'basicagent-memdir-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const memoryDir = join(base, 'rootA', 'data');
+  mkdirSync(memoryDir, { recursive: true });
+  writeFileSync(join(memoryDir, 'audit.jsonl'), '');
+  const configPath = join(base, 'config.json');
+  writeFileSync(configPath, JSON.stringify({
+    tools: { files: { roots: [{ path: 'rootA', access: 'rw' }] } },
+    memory: { enabled: true, dir: memoryDir }
+  }));
+  const config = loadConfig({ flags: { config: configPath }, env: {}, cwd: base });
+  const tools = new Map(fileTools({ config, cwd: base }).map((tool) => [tool.name, tool]));
+
+  const denied = makeContext(false);
+  await assert.rejects(
+    () => tools.get('write_file').run({ path: 'rootA/data/audit.jsonl', content: 'tampered' }, denied.ctx),
+    /denied by user/
+  );
+  assert.equal(denied.approvals.length, 1);
+  assert.equal(readFileSync(join(memoryDir, 'audit.jsonl'), 'utf8'), '');
+
+  const allowed = makeContext(true);
+  await tools.get('write_file').run({ path: 'rootA/data/facts.jsonl', content: 'ok' }, allowed.ctx);
+  assert.equal(readFileSync(join(memoryDir, 'facts.jsonl'), 'utf8'), 'ok');
+});
+
+test('edit_file enforces the write size limit', async (t) => {
+  const { base, config, tools } = makeSandbox();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  config.tools.files.maxWriteBytes = 20;
+  const { ctx } = makeContext();
+  writeFileSync(join(base, 'rootA', 'grow.txt'), 'short');
+  await assert.rejects(
+    () => tools.get('edit_file').run({ path: 'rootA/grow.txt', old_string: 'short', new_string: 'x'.repeat(50) }, ctx),
+    /write limit/
+  );
+  assert.equal(readFileSync(join(base, 'rootA', 'grow.txt'), 'utf8'), 'short');
 });

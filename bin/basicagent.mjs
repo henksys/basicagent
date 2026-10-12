@@ -12,7 +12,8 @@
 // The REPL supports: /help /new /reload /skills /tools /model /config /quit
 //
 // One-shot mode denies approval-required actions unless --yes is given, so
-// scripts never hang on a prompt. The REPL asks interactively.
+// scripts never hang on a prompt. The REPL asks interactively; --yes there
+// auto-approves everything as well.
 
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline';
@@ -48,7 +49,8 @@ Options:
   --ephemeral        Disable memory for this run
   --no-web           Disable the fetch_url web tool for this run
   --json             One-shot JSON-lines event output (for scripts)
-  --yes              Auto-approve guarded actions in one-shot mode (dangerous)
+  --yes              Auto-approve guarded actions without asking (dangerous,
+                     in both REPL and one-shot mode)
   -h, --help         Show this help
   -v, --version      Show the version
 
@@ -200,7 +202,7 @@ async function main() {
   function build() {
     skills = discoverSkills(config.skills.paths);
     provider = new Provider(config);
-    registry = createRegistry({ config, memory, skills, cwd });
+    registry = createRegistry({ config, memory, skills, cwd, onAuditError: (text) => ui.warn(text) });
     agent = new Agent({ provider, registry, config, emit: onEvent, approve });
     agent.messages = history;
   }

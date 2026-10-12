@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { webTools, isPrivateAddress, decodeEntities, htmlToText, detectCharset, domainMatches } from '../src/tools/web.mjs';
+import { webTools, isPrivateAddress, decodeEntities, htmlToText, detectCharset, domainMatches, pinnedLookup } from '../src/tools/web.mjs';
 
 function webConfig(overrides = {}) {
   return {
@@ -246,9 +246,45 @@ test('isPrivateAddress covers the important ranges', () => {
   for (const ip of ['127.0.0.1', '0.0.0.0', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '224.0.0.1', '::1', '::', 'fc00::1', 'fd12::1', 'fe80::1', 'ff02::1', '::ffff:127.0.0.1']) {
     assert.equal(isPrivateAddress(ip), true, `${ip} should be blocked`);
   }
-  for (const ip of ['8.8.8.8', '1.1.1.1', '172.32.0.1', '192.169.0.1', '2001:4860:4860::8888']) {
+  for (const ip of ['8.8.8.8', '1.1.1.1', '172.32.0.1', '192.169.0.1', '2001:4860:4860::8888', '::ffff:8.8.8.8']) {
     assert.equal(isPrivateAddress(ip), false, `${ip} should be allowed`);
   }
+});
+
+test('isPrivateAddress blocks non-canonical and v4-in-v6 forms', () => {
+  for (const ip of [
+    '0:0:0:0:0:0:0:1',          // loopback, expanded
+    '0:0:0:0:0:0:0:0',          // unspecified, expanded
+    '::7f00:1',                 // IPv4-compatible loopback
+    '::ffff:0:127.0.0.1',       // IPv4-translated loopback
+    '64:ff9b::7f00:1',          // NAT64 well-known prefix -> 127.0.0.1
+    '2002:7f00:1::',            // 6to4
+    '2001::1',                  // Teredo
+    '100::1',                   // discard-only
+    '2001:db8::1'               // documentation
+  ]) {
+    assert.equal(isPrivateAddress(ip), true, `${ip} should be blocked`);
+  }
+  assert.equal(isPrivateAddress('not-an-ip'), true, 'unparseable input should be blocked');
+  assert.equal(isPrivateAddress('::ffff:93.184.216.34'), false, 'public v4-mapped should be allowed');
+});
+
+test('pinnedLookup only returns previously validated addresses', async () => {
+  const addresses = [{ address: '93.184.216.34', family: 4 }, { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }];
+
+  const all = await new Promise((resolve, reject) => pinnedLookup(addresses)('example.com', { all: true }, (error, result) => error ? reject(error) : resolve(result)));
+  assert.deepEqual(all, addresses);
+
+  const single = await new Promise((resolve, reject) => pinnedLookup(addresses)('example.com', {}, (error, address, family) => error ? reject(error) : resolve({ address, family })));
+  assert.deepEqual(single, addresses[0]);
+
+  const v6 = await new Promise((resolve, reject) => pinnedLookup(addresses)('example.com', { all: true, family: 6 }, (error, result) => error ? reject(error) : resolve(result)));
+  assert.deepEqual(v6, [addresses[1]]);
+
+  await assert.rejects(
+    () => new Promise((resolve, reject) => pinnedLookup([addresses[0]])('example.com', { all: true, family: 6 }, (error, result) => error ? reject(error) : resolve(result))),
+    /No allowed address/
+  );
 });
 
 test('decodeEntities never double-decodes', () => {
@@ -269,4 +305,22 @@ test('domainMatches handles subdomains and wildcards', () => {
   assert.equal(domainMatches('example.com', 'www.example.com'), true);
   assert.equal(domainMatches('*.example.com', 'example.com'), true);
   assert.equal(domainMatches('example.com', 'notexample.com'), false);
+});
+
+test('domainMatches ignores a trailing root dot', () => {
+  assert.equal(domainMatches('example.com', 'example.com.'), true);
+  assert.equal(domainMatches('example.com', 'www.example.com.'), true);
+  assert.equal(domainMatches('example.com.', 'example.com.'), true);
+  assert.equal(domainMatches('example.com', 'notexample.com.'), false);
+});
+
+test('a trailing root dot cannot bypass the deny list', async () => {
+  await assert.rejects(
+    () => tool(webConfig({ allowPrivate: false, denyDomains: ['example.com'] })).run({ url: 'http://example.com./x' }, ctx),
+    /deny list/
+  );
+  await assert.rejects(
+    () => tool(webConfig({ allowPrivate: false, denyDomains: ['example.com'] })).run({ url: 'http://www.example.com./x' }, ctx),
+    /deny list/
+  );
 });

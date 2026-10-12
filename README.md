@@ -28,12 +28,14 @@ Done: added provider.timeoutMs handling and all tests pass.
 - **Agent loop with limits** — iteration cap, repeated-failure circuit breaker,
   context trimming, Ctrl+C abort.
 - **File tools** — read, write, edit, append, list, rename, with a
-  root-based access policy (`rw` / `ro` / `approval` / `deny`), symlink-safe
-  path checks and protected paths.
+  root-based access policy (`rw` / `ro` / `approval` / `deny`, most specific
+  root wins), symlink-safe path checks and protected paths (config file and
+  memory data directory included).
 - **Web fetch** — a zero-dependency `fetch_url` tool with SSRF protection
-  (private/reserved addresses blocked before and after redirects), domain
-  allow/deny lists, bounded HTML-to-text extraction, and no cookies or JS.
-  Disable it with `tools.web.enabled: false` or `--no-web`.
+  (private/reserved addresses blocked before and after redirects, including
+  non-canonical IPv6 forms; the connection is pinned to the validated
+  addresses), domain allow/deny lists, bounded HTML-to-text extraction, and no
+  cookies or JS. Disable it with `tools.web.enabled: false` or `--no-web`.
 - **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
   format used by Omarchy/Claude-style skill directories. Ships a bundled
   [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
@@ -88,7 +90,7 @@ basicagent [options] [prompt]
   --ephemeral       disable memory for this run
   --no-web          disable the fetch_url web tool for this run
   --json            JSON-lines event output (for scripts)
-  --yes             auto-approve guarded actions in one-shot mode (dangerous)
+  --yes             auto-approve guarded actions without asking (dangerous)
 ```
 
 ## Development

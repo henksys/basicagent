@@ -238,20 +238,26 @@ Then `/reload` in the REPL (or just start a new run). See
 ```
 
 - `rw` free access, `ro` read only, `approval` writes ask first, `deny` blocked.
-  Paths outside all roots are always refused.
+  Paths outside all roots are always refused. When roots overlap, the most
+  specific (longest) matching root decides, so a broad `rw` root cannot
+  silently shadow a narrower `deny` or `approval` root.
 - `protectedPaths` force a prompt even inside an `rw` root. The active
-  basicagent config file is protected automatically, so the agent can edit its
-  own config only with your consent.
+  basicagent config file and the memory data directory (`memory.dir`, holding
+  facts, sessions and the audit log) are protected automatically, so the agent
+  can change its own record only with your consent.
 - `shell` is off by default. When enabled, every command is shown and needs a
   `y` in the REPL. Approving a command is full trust: a command can write
   anywhere, so allow it only if you accept that.
 - `fetch_url` (web) is read-only and on by default. It refuses private and
-  reserved network addresses (before and after redirects) and never runs
+  reserved network addresses (before and after redirects, including
+  non-canonical IPv6, NAT64, 6to4 and Teredo forms) and the connection is
+  pinned to the validated addresses so DNS cannot be rebound. It never runs
   JavaScript or sends cookies. Restrict it with `denyDomains` /
   `allowDomains`, or turn it off entirely with `"enabled": false` or the
   `--no-web` flag for one run. Set `"approval": "always"` to confirm each
   fetch. `allowPrivate` is a testing escape hatch — leave it false.
-- Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`.
+- Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`,
+  including approval requests and their answers.
 
 ## 7. Memory
 
@@ -264,7 +270,7 @@ with `memory.dir`, created with mode 0700. The files are plain JSON:
 | `facts.jsonl` | long-term facts, injected into the system prompt of every run |
 | `sessions/<id>.jsonl` | user/assistant text of one conversation |
 | `last-session.txt` | session pointer used by `--continue` |
-| `audit.jsonl` | one line per tool call: tool, args, ok/error, duration |
+| `audit.jsonl` | one line per tool call: tool, args, ok/error, duration, approvals |
 
 ```sh
 basicagent --continue "what did we work on last time?"   # resume last session
