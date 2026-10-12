@@ -21,13 +21,14 @@ keep using the paths and tooling described here.
 | Thing | Location |
 | --- | --- |
 | Config | `~/.config/basicagent/config.json` (or `--config`, `BASICAGENT_CONFIG`) |
-| Data | `~/.local/share/basicagent` (or `memory.dir`), mode 0700 |
+| Data | `$XDG_DATA_HOME/basicagent` (or `~/.local/share/basicagent`); set via `memory.dir`, `BASICAGENT_DATA_DIR` or `--data-dir`, mode 0700 |
 | Facts | `facts.jsonl` — injected into your system prompt on every run |
 | Sessions | `sessions/<id>.jsonl`; `last-session.txt` drives `--continue` |
 | Audit | `audit.jsonl` — one line per tool call |
 | Source | `bin/basicagent.mjs` (CLI), `src/` (loop, provider, tools), `skills/`, `docs/`, `test/` |
 
-Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`.
+Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
+`BASICAGENT_DATA_DIR`.
 
 ## Configuration you can change
 

@@ -41,6 +41,8 @@ Usage:
 Options:
   --config <file>    Config file (default: ~/.config/basicagent/config.json)
   --cwd <dir>        Working directory for this run (default: current directory)
+  --data-dir <dir>   Data directory for facts/sessions/audit
+                     (default: $XDG_DATA_HOME/basicagent or ~/.local/share/basicagent)
   --model <name>     Override the configured model
   --base-url <url>   Override the provider base URL (e.g. http://localhost:11434/v1)
   --api-key <key>    Override the API key (prefer BASICAGENT_API_KEY or apiKeyEnv)
@@ -58,7 +60,8 @@ REPL commands:
   /help /new /reload /skills /tools /model [name] /config /quit
 
 Settings come from, in order: built-in defaults, the config file,
-BASICAGENT_API_KEY/BASICAGENT_BASE_URL/BASICAGENT_MODEL, then CLI flags.
+BASICAGENT_API_KEY/BASICAGENT_BASE_URL/BASICAGENT_MODEL/BASICAGENT_DATA_DIR,
+then CLI flags.
 `;
 
 function parseFlags(argv) {
@@ -71,6 +74,7 @@ function parseFlags(argv) {
       session: { type: 'string' },
       config: { type: 'string' },
       cwd: { type: 'string' },
+      'data-dir': { type: 'string' },
       model: { type: 'string' },
       'base-url': { type: 'string' },
       'api-key': { type: 'string' },
@@ -118,6 +122,7 @@ async function main() {
   const flags = {
     config: values.config,
     cwd: values.cwd,
+    dataDir: values['data-dir'],
     model: values.model,
     baseUrl: values['base-url'],
     apiKey: values['api-key'],

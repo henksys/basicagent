@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, deepMerge, defaultConfigPath, BUNDLED_SKILLS_DIR } from '../src/config.mjs';
+import { loadConfig, deepMerge, defaultConfigPath, defaultDataDir, BUNDLED_SKILLS_DIR } from '../src/config.mjs';
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), 'basicagent-config-'));
@@ -104,6 +104,59 @@ test('deepMerge merges objects and replaces arrays', () => {
 
 test('defaultConfigPath honors XDG_CONFIG_HOME', () => {
   assert.equal(defaultConfigPath({ XDG_CONFIG_HOME: '/x' }), join('/x', 'basicagent', 'config.json'));
+});
+
+test('defaultDataDir honors XDG_DATA_HOME', () => {
+  assert.equal(defaultDataDir({ XDG_DATA_HOME: '/x' }), join('/x', 'basicagent'));
+});
+
+test('the data directory follows flag > env > file > XDG default', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    const env = { XDG_CONFIG_HOME: join(dir, '.config'), XDG_DATA_HOME: join(dir, 'xdg-data') };
+
+    // Nothing configured: XDG-aware default.
+    let config = loadConfig({ env, cwd: dir });
+    assert.equal(config.memory.dir, join(dir, 'xdg-data', 'basicagent'));
+
+    // Config file value beats the default; relative paths resolve against cwd.
+    writeFileSync(configPath, JSON.stringify({ memory: { dir: 'agent-data' } }));
+    config = loadConfig({ flags: { config: configPath }, env, cwd: dir });
+    assert.equal(config.memory.dir, join(dir, 'agent-data'));
+
+    // Environment beats the config file.
+    config = loadConfig({
+      flags: { config: configPath },
+      env: { ...env, BASICAGENT_DATA_DIR: join(dir, 'env-data') },
+      cwd: dir
+    });
+    assert.equal(config.memory.dir, join(dir, 'env-data'));
+
+    // The flag beats the environment.
+    config = loadConfig({
+      flags: { config: configPath, dataDir: join(dir, 'flag-data') },
+      env: { ...env, BASICAGENT_DATA_DIR: join(dir, 'env-data') },
+      cwd: dir
+    });
+    assert.equal(config.memory.dir, join(dir, 'flag-data'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('invalid memory.dir values are rejected', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    for (const body of [{ memory: { dir: '' } }, { memory: { dir: 5 } }, { memory: { dir: null } }]) {
+      writeFileSync(configPath, JSON.stringify(body));
+      assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /memory\.dir/, JSON.stringify(body));
+    }
+    assert.throws(() => loadConfig({ flags: { config: configPath, dataDir: '' }, env: {}, cwd: dir }), /memory\.dir/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the bundled skills directory is always included, after user paths', () => {

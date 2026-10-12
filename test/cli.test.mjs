@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,4 +154,21 @@ test('--no-web removes fetch_url from the tool schema', async (t) => {
   const names = server.requests[0].tools.map((tool) => tool.function.name);
   assert.ok(!names.includes('fetch_url'), 'fetch_url must be absent');
   assert.ok(names.includes('read_file'), 'other tools remain');
+});
+
+test('--data-dir puts sessions and the audit log there', async (t) => {
+  const server = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"hello.txt","content":"hi"}' }), finishChunk('tool_calls')],
+    [textChunk('Done.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server, { memory: { enabled: true } });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dataDir = join(dir, 'agent-data');
+
+  const result = await runCli(['--config', configPath, '--data-dir', dataDir, '--json', 'hello'], { cwd: dir });
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(existsSync(join(dataDir, 'last-session.txt')), 'session pointer lives in the data dir');
+  assert.ok(existsSync(join(dataDir, 'audit.jsonl')), 'audit log lives in the data dir');
+  assert.equal(readdirSync(join(dataDir, 'sessions')).filter((name) => name.endsWith('.jsonl')).length, 1);
 });

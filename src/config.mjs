@@ -5,8 +5,9 @@
 // Precedence, lowest to highest:
 //   1. built-in DEFAULTS
 //   2. the config file (--config, BASICAGENT_CONFIG, or ~/.config/basicagent/config.json)
-//   3. environment overrides (BASICAGENT_API_KEY, BASICAGENT_BASE_URL, BASICAGENT_MODEL)
-//   4. command line flags (--api-key, --base-url, --model)
+//   3. environment overrides (BASICAGENT_API_KEY, BASICAGENT_BASE_URL,
+//      BASICAGENT_MODEL, BASICAGENT_DATA_DIR)
+//   4. command line flags (--api-key, --base-url, --model, --data-dir)
 //
 // Every path in the config may start with "~". Relative paths are resolved
 // against the directory basicagent was started in (the "cwd").
@@ -103,6 +104,8 @@ export const DEFAULTS = Object.freeze({
   },
   memory: {
     enabled: true,
+    // Overridden in loadConfig with the XDG-aware defaultDataDir(env) unless
+    // the config file, BASICAGENT_DATA_DIR or --data-dir sets a directory.
     dir: '~/.local/share/basicagent'
   }
 });
@@ -111,6 +114,13 @@ export const DEFAULTS = Object.freeze({
 export function defaultConfigPath(env = process.env) {
   const base = env.XDG_CONFIG_HOME || join(homedir(), '.config');
   return join(base, 'basicagent', 'config.json');
+}
+
+// Default data directory (facts, sessions, audit log). Honors XDG_DATA_HOME
+// like defaultConfigPath does for XDG_CONFIG_HOME.
+export function defaultDataDir(env = process.env) {
+  const base = env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+  return join(base, 'basicagent');
 }
 
 // Merge `overlay` into `base` recursively. Arrays and scalars replace.
@@ -185,6 +195,7 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   config.skills.paths = config.skills.paths.map((path) => resolveUserPath(path, cwd));
 
   if (typeof config.memory.enabled !== 'boolean') throw new Error('memory.enabled must be a boolean');
+  if (typeof config.memory.dir !== 'string' || !config.memory.dir.trim()) throw new Error('memory.dir must be a non-empty string');
   config.memory.dir = resolveUserPath(config.memory.dir, cwd);
 
   if (agent.systemPromptFile) agent.systemPromptFile = resolveUserPath(agent.systemPromptFile, cwd);
@@ -229,6 +240,16 @@ export function loadConfig({ flags = {}, env = process.env, cwd = process.cwd() 
   if (flags.baseUrl !== undefined) config.provider.baseUrl = flags.baseUrl;
   if (flags.model !== undefined) config.provider.model = flags.model;
   if (flags.noWeb) config.tools.web.enabled = false;
+
+  // Data directory: flag > BASICAGENT_DATA_DIR > config file memory.dir >
+  // XDG-aware default. The default only applies when the file did not set one;
+  // an invalid value from the file or a flag still fails validation.
+  if (config.memory && typeof config.memory === 'object' && !Array.isArray(config.memory)) {
+    const fileHasDataDir = Object.prototype.hasOwnProperty.call(fileConfig.memory ?? {}, 'dir');
+    if (flags.dataDir !== undefined) config.memory.dir = flags.dataDir;
+    else if (env.BASICAGENT_DATA_DIR) config.memory.dir = env.BASICAGENT_DATA_DIR;
+    else if (!fileHasDataDir) config.memory.dir = defaultDataDir(env);
+  }
 
   // The API key may come from a named environment variable (keeps secrets
   // out of the config file). A directly configured key wins over the env name.

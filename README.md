@@ -41,7 +41,8 @@ Done: added provider.timeoutMs handling and all tests pass.
   [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
   agent's own configuration, memory, guardrails and extension process.
 - **Persistent memory** — facts and conversation text in plain JSONL under
-  `~/.local/share/basicagent` (configurable via `memory.dir`); resume with
+  `$XDG_DATA_HOME/basicagent` (or `~/.local/share/basicagent`); set it per
+  agent with `memory.dir`, `BASICAGENT_DATA_DIR` or `--data-dir`; resume with
   `--continue` or `--session`.
 - **Interactive and scriptable** — REPL for conversation, one-shot mode for
   automation, `--json` event stream for embedding.
@@ -83,6 +84,8 @@ basicagent [options] [prompt]
 
   --config <file>   config file (default ~/.config/basicagent/config.json)
   --cwd <dir>       working directory for this run
+  --data-dir <dir>  data directory for facts/sessions/audit
+                    (default $XDG_DATA_HOME/basicagent, or ~/.local/share/basicagent)
   --model <name>    override the model
   --base-url <url>  override the provider URL
   --continue        resume the most recent session

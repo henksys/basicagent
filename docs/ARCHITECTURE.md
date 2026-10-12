@@ -260,7 +260,9 @@ Instructions for the model, in markdown.
 
 ## Memory format
 
-Under `memory.dir` (default `~/.local/share/basicagent`, mode `0700`):
+Under `memory.dir` (default: `$XDG_DATA_HOME/basicagent`, falling back to
+`~/.local/share/basicagent`; settable per agent via the config file,
+`BASICAGENT_DATA_DIR` or `--data-dir`; mode `0700`):
 
 | File | Content |
 | --- | --- |
@@ -286,7 +288,8 @@ Resuming replays only user/assistant text; tool traffic is not replayed.
 ## Configuration reference
 
 See `config.example.json` and the table in `docs/TUTORIAL.md`. Precedence:
-defaults, config file, environment, CLI flags.
+defaults, config file, environment (`BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`,
+`BASICAGENT_MODEL`, `BASICAGENT_DATA_DIR`), CLI flags.
 
 ## Testing
 

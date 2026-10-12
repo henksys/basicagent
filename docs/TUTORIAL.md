@@ -119,7 +119,7 @@ basicagent
 ```
 
 ```
-basicagent 1.2.1
+basicagent 1.2.2
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -262,8 +262,9 @@ Then `/reload` in the REPL (or just start a new run). See
 ## 7. Memory
 
 basicagent saves long-term facts (via the `remember` tool) and user/assistant
-text per conversation session under `~/.local/share/basicagent` — configurable
-with `memory.dir`, created with mode 0700. The files are plain JSON:
+text per conversation session under `$XDG_DATA_HOME/basicagent` (falling back
+to `~/.local/share/basicagent`), created with mode 0700. The files are plain
+JSON:
 
 | File | Contents |
 | --- | --- |
@@ -271,6 +272,15 @@ with `memory.dir`, created with mode 0700. The files are plain JSON:
 | `sessions/<id>.jsonl` | user/assistant text of one conversation |
 | `last-session.txt` | session pointer used by `--continue` |
 | `audit.jsonl` | one line per tool call: tool, args, ok/error, duration, approvals |
+
+The directory can be set per agent, in the usual precedence order: `--data-dir`
+flag, then `BASICAGENT_DATA_DIR`, then `memory.dir` in the config file, then
+the XDG-aware default above:
+
+```sh
+basicagent --data-dir ~/agents/scout/data "what do you remember?"
+BASICAGENT_DATA_DIR=~/agents/scout/data basicagent "..."   # same, via env
+```
 
 ```sh
 basicagent --continue "what did we work on last time?"   # resume last session
