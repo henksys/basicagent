@@ -392,22 +392,23 @@ code {
 .aside-hint { font-size: 0.8rem; color: var(--fg-faint); margin: 0.6rem 0 0; }
 
 .session-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
-.session-list li { margin: 0; }
-.session-list button {
-  width: 100%;
+.session-list li { display: flex; align-items: center; gap: 0.5rem; margin: 0; border-bottom: 1px solid var(--border); }
+.session-list .session-open {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   text-align: left;
   background: none;
   border: 0;
-  border-bottom: 1px solid var(--border);
   padding: 0.7rem 0.2rem;
   cursor: pointer;
   color: var(--fg-muted);
 }
-.session-list button:hover { color: var(--fg); }
-.session-list button[aria-current="true"] { color: var(--accent); }
+.session-list .session-open:hover { color: var(--fg); }
+.session-list .session-open[aria-current="true"] { color: var(--accent); }
+.session-list .session-delete { flex: none; }
 .session-list .session-title { font-size: 0.88rem; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .session-list .session-meta { font-family: var(--font-mono); font-size: 0.68rem; color: var(--fg-faint); }
 
@@ -579,7 +580,7 @@ code {
   background: var(--surface);
   padding: 0 0.9rem;
 }
-.session-list-tall button { padding: 0.75rem 0.1rem; }
+.session-list-tall .session-open { padding: 0.75rem 0.1rem; }
 
 .transcript {
   border: 1px solid var(--border);

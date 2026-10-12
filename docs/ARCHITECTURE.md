@@ -146,6 +146,7 @@ is treated like local shell access:
 | `POST /api/chat/abort` | cancels the running turn (also on client disconnect). |
 | `POST /api/approvals/:id` | answers a paused approval; expired/unknown ids 404. |
 | `GET/POST /api/sessions`, `GET /api/sessions/:id` | session list and transcripts from `sessions/*.jsonl`. |
+| `DELETE /api/sessions/:id` | removes one stored conversation and its in-memory session; the `--continue` pointer moves to the newest remaining session (409 while a turn runs). |
 | `GET/PUT /api/facts`, `DELETE /api/facts/:key` | fact store via `Memory` (exact-key delete). |
 | `GET /api/audit` | parsed `audit.jsonl`, newest first, `limit`/`tool`/`ok` filters. |
 | `GET/PUT /api/config` | raw file + effective (masked) config; PUT validates, writes atomically and live-reloads every session. |

@@ -95,6 +95,24 @@ export class Memory {
     }
   }
 
+  // Delete one conversation. Returns true when the file existed. When the
+  // deleted session was the --continue pointer it moves to the newest
+  // remaining session, or removes the pointer when none remain.
+  deleteSession(id) {
+    const clean = sanitizeSessionId(id);
+    const file = join(this.sessionsDir, `${clean}.jsonl`);
+    if (!existsSync(file)) return false;
+    unlinkSync(file);
+    const pointer = existsSync(this.lastSessionPath) ? readFileSync(this.lastSessionPath, 'utf8').trim() : '';
+    if (pointer === clean) {
+      const remaining = readdirSync(this.sessionsDir).filter((name) => name.endsWith('.jsonl')).sort();
+      const newest = remaining[remaining.length - 1];
+      if (newest) writeFileSync(this.lastSessionPath, `${newest.replace(/\.jsonl$/, '')}\n`, { mode: 0o600 });
+      else unlinkSync(this.lastSessionPath);
+    }
+    return true;
+  }
+
   readSession(id) {
     const file = join(this.sessionsDir, `${sanitizeSessionId(id)}.jsonl`);
     if (!existsSync(file)) return [];

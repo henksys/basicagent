@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Henk
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Memory } from '../src/memory.mjs';
@@ -43,4 +43,25 @@ test('reloadFacts picks up facts written by another instance', (t) => {
   writeFileSync(join(dir, 'facts.jsonl'), 'not json\n{"key":"c","value":"3","at":"now"}\n');
   assert.equal(memory.reloadFacts(), 1, 'damaged lines are skipped');
   assert.equal(memory.facts.get('c').value, '3');
+});
+
+test('deleteSession removes the file and keeps the continue pointer valid', (t) => {
+  const { dir, memory } = makeMemory(t);
+  const a = memory.startSession('20260101000000-aaaa');
+  const b = memory.startSession('20260102000000-bbbb');
+  const c = memory.startSession('20260103000000-cccc');
+  memory.appendEvent('user', 'hello from c');
+  const pointer = () => readFileSync(join(dir, 'last-session.txt'), 'utf8').trim();
+
+  assert.equal(memory.deleteSession(c), true, 'deletes the newest session');
+  assert.ok(!existsSync(join(dir, 'sessions', `${c}.jsonl`)), 'file is gone');
+  assert.equal(pointer(), b, 'pointer moves to the next remaining session');
+
+  assert.equal(memory.deleteSession(b), true);
+  assert.equal(pointer(), a);
+
+  assert.equal(memory.deleteSession(a), true);
+  assert.ok(!existsSync(join(dir, 'last-session.txt')), 'pointer is removed with the last session');
+
+  assert.equal(memory.deleteSession('20260104000000-dddd'), false, 'unknown ids report false');
 });

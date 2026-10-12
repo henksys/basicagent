@@ -11,6 +11,7 @@
 //   GET    /api/sessions            list stored conversations
 //   POST   /api/sessions            start (or resume) a conversation
 //   GET    /api/sessions/:id        one transcript with timestamps
+//   DELETE /api/sessions/:id        remove one stored conversation
 //   GET    /api/facts               list saved facts
 //   PUT    /api/facts               add/update a fact {key, value}
 //   DELETE /api/facts/:key          remove a fact by exact key
@@ -242,6 +243,21 @@ export function createApi({ state, manager, version }) {
     sendJSON(res, 200, { id, messages });
   }
 
+  function sessionDelete(res, path) {
+    const dir = memoryDir();
+    if (!dir) return badRequest(res, 'memory is disabled');
+    const id = segment(path, '/api/sessions/');
+    if (!id) return sendJSON(res, 404, { error: 'Unknown session' });
+    let result;
+    try {
+      result = manager.deleteSession(id);
+    } catch (error) {
+      if (error.status === 409) return sendJSON(res, 409, { error: error.message });
+      return badRequest(res, 'Invalid session id');
+    }
+    sendJSON(res, 200, result);
+  }
+
   function factsList(res) {
     const store = manager.factStore;
     if (!store) return badRequest(res, 'memory is disabled');
@@ -386,6 +402,10 @@ export function createApi({ state, manager, version }) {
       }
       if (path.startsWith('/api/sessions/') && method === 'GET') {
         sessionGet(res, path);
+        return true;
+      }
+      if (path.startsWith('/api/sessions/') && method === 'DELETE') {
+        sessionDelete(res, path);
         return true;
       }
       if (path === '/api/facts' && method === 'GET') {

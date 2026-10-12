@@ -120,7 +120,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.1
+basicagent 1.3.2
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...

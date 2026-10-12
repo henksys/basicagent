@@ -199,6 +199,34 @@ test('chat streams events, persists the session and lists it', async (t) => {
   assert.equal(empty.status, 400);
 });
 
+test('sessions can be deleted from the Memory API', async (t) => {
+  const provider = await startFakeProvider([[textChunk('Hi.'), finishChunk('stop')]]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, { baseUrl: provider.baseUrl });
+
+  const first = await json('/api/sessions', { method: 'POST', body: { id: 'session-one' } });
+  const second = await json('/api/sessions', { method: 'POST', body: { id: 'session-two' } });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  await stream(first.data.id, 'remember this');
+  assert.equal((await json('/api/sessions')).data.sessions.length, 2);
+
+  const deleted = await json(`/api/sessions/${first.data.id}`, { method: 'DELETE' });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.removed, true);
+  assert.equal(deleted.data.lastSessionId, second.data.id, 'the continue pointer moves to the remaining session');
+
+  const list = await json('/api/sessions');
+  assert.deepEqual(list.data.sessions.map((session) => session.id), [second.data.id]);
+  assert.deepEqual((await json(`/api/sessions/${first.data.id}`)).data.messages, [], 'transcript is gone');
+  assert.ok(!existsSync(join(dir, 'data', 'sessions', `${first.data.id}.jsonl`)), 'file is gone');
+
+  const again = await json(`/api/sessions/${first.data.id}`, { method: 'DELETE' });
+  assert.equal(again.status, 200);
+  assert.equal(again.data.removed, false);
+  assert.equal((await json('/api/sessions/', { method: 'DELETE' })).status, 404);
+});
+
 test('tool calls are executed, audited and streamed over the API', async (t) => {
   const provider = await startFakeProvider([
     [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"hello.txt","content":"hi from web"}' }), finishChunk('tool_calls')],
@@ -313,10 +341,18 @@ test('a running turn reports busy and can be aborted', async (t) => {
   const busy = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: 'again' } });
   assert.equal(busy.status, 409);
 
+  const deleteBusy = await json(`/api/sessions/${session.data.id}`, { method: 'DELETE' });
+  assert.equal(deleteBusy.status, 409, 'cannot delete while a turn is running');
+
   const abort = await json('/api/chat/abort', { method: 'POST', body: { sessionId: session.data.id } });
   assert.equal(abort.status, 200);
   const result = await streamPromise;
   assert.ok(result.events.some((event) => event.type === 'aborted'), 'aborted event sent');
+
+  const deleted = await json(`/api/sessions/${session.data.id}`, { method: 'DELETE' });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.removed, true);
+  assert.equal(deleted.data.lastSessionId, null);
 });
 
 test('facts can be listed, added and removed', async (t) => {
@@ -391,6 +427,7 @@ test('memory disabled turns off facts, sessions and the audit API', async (t) =>
 
   assert.equal((await json('/api/facts')).status, 400);
   assert.equal((await json('/api/audit')).status, 400);
+  assert.equal((await json('/api/sessions/whatever', { method: 'DELETE' })).status, 400);
   const sessions = await json('/api/sessions');
   assert.deepEqual(sessions.data, { memoryEnabled: false, sessions: [] });
 

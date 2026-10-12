@@ -182,6 +182,22 @@ export class SessionManager {
     return this.get(id || newSessionId());
   }
 
+  // Delete one stored conversation and drop its in-memory session. Throws
+  // with status 409 when a turn is still running in it.
+  deleteSession(id) {
+    const clean = sanitizeSessionId(id);
+    const session = this.sessions.get(clean);
+    if (session?.busy) {
+      const error = new Error('A turn is running in this session');
+      error.status = 409;
+      throw error;
+    }
+    this.sessions.delete(clean);
+    const removed = this.factStore ? this.factStore.deleteSession(clean) : false;
+    const dir = this.config.memory.enabled ? this.config.memory.dir : null;
+    return { removed, lastSessionId: dir ? lastSessionPointer(dir) : null };
+  }
+
   anyBusy() {
     return [...this.sessions.values()].some((session) => session.busy);
   }

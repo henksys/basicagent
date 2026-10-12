@@ -409,7 +409,7 @@
     $('#sessions-hint').textContent = data.memoryEnabled ? '' : 'Memory is disabled; conversations are not saved.';
     for (const session of data.sessions) {
       const item = document.createElement('li');
-      const button = el('button');
+      const button = el('button', 'session-open');
       button.type = 'button';
       button.append(el('span', 'session-title', session.title || '(empty)'));
       button.append(el('span', 'session-meta', `${session.id} · ${session.messages} msgs`));
@@ -665,6 +665,7 @@
   // ===== Memory ===============================================================
 
   let memoryTab = 'facts';
+  let transcriptId = null;
 
   function loadMemoryView() {
     if (memoryTab === 'facts') loadFacts();
@@ -755,7 +756,7 @@
       }
       for (const session of data.sessions) {
         const item = document.createElement('li');
-        const button = el('button');
+        const button = el('button', 'session-open');
         button.type = 'button';
         button.append(el('span', 'session-title', session.title || '(empty)'));
         button.append(el('span', 'session-meta', `${session.id} · ${session.messages} msgs · ${formatTime(session.updatedAt)}`));
@@ -765,7 +766,10 @@
             $('#transcript').append(el('p', 'empty-note', `Could not load the transcript: ${error.message}`));
           });
         });
-        item.append(button);
+        const remove = el('button', 'btn btn-small btn-ghost session-delete', 'Delete');
+        remove.type = 'button';
+        remove.addEventListener('click', () => deleteMemorySession(session.id));
+        item.append(button, remove);
         list.append(item);
       }
     } catch (error) {
@@ -776,8 +780,34 @@
     }
   }
 
+  async function deleteMemorySession(id) {
+    if (!confirm(`Delete session ${id}? This removes the stored conversation from disk.`)) return;
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      showToast('Session deleted.', 'ok');
+      if (chat.sessionId === id) {
+        chat.sessionId = null;
+        chat.assistantEl = null;
+        chat.pendingTools = [];
+        $('#messages').textContent = '';
+        $('#chat-title').textContent = 'Chat';
+        addNotice('This session was deleted. The next message starts a new conversation.');
+      }
+      if (transcriptId === id) {
+        transcriptId = null;
+        $('#transcript').textContent = '';
+        $('#transcript').append(el('p', 'empty-note', 'Pick a session to read its transcript.'));
+      }
+      await loadMemorySessions();
+      await loadSessionList();
+    } catch (error) {
+      showToast(`Could not delete: ${error.message}`, 'error');
+    }
+  }
+
   async function loadTranscript(id) {
     const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
+    transcriptId = data.id;
     const container = $('#transcript');
     container.textContent = '';
     const head = el('div', 'transcript-head');
