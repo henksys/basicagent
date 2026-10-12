@@ -1,0 +1,401 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Henk
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer, request } from 'node:http';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startFakeProvider, textChunk, toolChunk, finishChunk } from './fixtures/fake-server.mjs';
+import { loadConfig } from '../src/config.mjs';
+import { startWebServer } from '../src/web/server.mjs';
+
+const TOKEN = 'test-token';
+
+async function setup(t, { baseUrl = 'http://127.0.0.1:9/v1', config = {} } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'basicagent-web-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const configPath = join(dir, 'config.json');
+  const raw = {
+    provider: { baseUrl, model: 'fake-model', ...(config.provider || {}) },
+    tools: config.tools || { files: { roots: [{ path: dir, access: 'rw' }] } },
+    skills: { paths: [], ...(config.skills || {}) },
+    memory: config.memory || { dir: join(dir, 'data') }
+  };
+  if (config.agent) raw.agent = config.agent;
+  writeFileSync(configPath, JSON.stringify(raw));
+
+  const loaded = loadConfig({ flags: { config: configPath }, cwd: dir });
+  const started = await startWebServer({ config: loaded, flags: { config: configPath }, cwd: dir, version: 'test', token: TOKEN, port: 0 });
+  t.after(() => started.close());
+  const base = `http://127.0.0.1:${started.port}`;
+  const auth = { authorization: `Bearer ${TOKEN}` };
+
+  async function json(path, options = {}) {
+    const response = await fetch(base + path, {
+      method: options.method ?? 'GET',
+      headers: { ...auth, ...(options.headers || {}), ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}) },
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+    });
+    const data = await response.json().catch(() => null);
+    return { status: response.status, data };
+  }
+
+  async function stream(sessionId, message, { onEvent } = {}) {
+    const response = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, message })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      return { status: response.status, events: [], data };
+    }
+    const events = [];
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (!line) continue;
+        const event = JSON.parse(line);
+        events.push(event);
+        if (onEvent) onEvent(event);
+      }
+    }
+    return { status: response.status, events };
+  }
+
+  function rawRequest(options = {}) {
+    return new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port: started.port, path: '/', method: 'GET', ...options }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  return { dir, configPath, started, base, auth, json, stream, rawRequest };
+}
+
+// A provider that streams one delta and then never finishes, so a turn stays
+// open until the client aborts it.
+async function startHangingProvider(t) {
+  const server = createServer(async (req, res) => {
+    for await (const chunk of req) void chunk;
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'thinking ' }, finish_reason: null }] })}\n\n`);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  t.after(() => new Promise((resolve) => {
+    server.closeAllConnections?.();
+    server.close(resolve);
+  }));
+  return { baseUrl: `http://127.0.0.1:${port}/v1` };
+}
+
+test('auth, host and origin checks protect the API', async (t) => {
+  const { base, auth } = await setup(t);
+
+  assert.equal((await fetch(`${base}/api/status`)).status, 401, 'no token');
+  assert.equal((await fetch(`${base}/api/status`, { headers: { authorization: 'Bearer wrong' } })).status, 401, 'wrong token');
+  assert.equal((await fetch(`${base}/api/status`, { headers: auth })).status, 200, 'valid token');
+
+  const evilHost = await new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: new URL(base).port, path: '/api/status', headers: { host: 'evil.example', authorization: `Bearer ${TOKEN}` } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(evilHost, 403, 'DNS-rebinding host rejected');
+
+  const evilOrigin = await fetch(`${base}/api/status`, { headers: { ...auth, origin: 'http://evil.example' } });
+  assert.equal(evilOrigin.status, 403, 'cross-origin API request rejected');
+
+  const sameOrigin = await fetch(`${base}/api/status`, { headers: { ...auth, origin: base } });
+  assert.equal(sameOrigin.status, 200, 'same-origin request allowed');
+
+  const staticNoAuth = await fetch(`${base}/`);
+  assert.equal(staticNoAuth.status, 200, 'static files load without a token');
+});
+
+test('status and static files', async (t) => {
+  const { base, auth } = await setup(t);
+
+  const index = await fetch(`${base}/`);
+  assert.equal(index.status, 200);
+  assert.match(index.headers.get('content-type'), /text\/html/);
+  assert.match(await index.text(), /basicagent/);
+
+  assert.equal((await fetch(`${base}/app.css`)).status, 200);
+  assert.equal((await fetch(`${base}/assets/css/tokens.css`)).status, 200);
+  assert.equal((await fetch(`${base}/assets/fonts/MarcellusSC-Regular.ttf`)).status, 200);
+
+  const { status, data } = await (async () => {
+    const response = await fetch(`${base}/api/status`, { headers: auth });
+    return { status: response.status, data: await response.json() };
+  })();
+  assert.equal(status, 200);
+  assert.equal(data.model, 'fake-model');
+  assert.equal(data.memoryEnabled, true);
+  assert.ok(data.tools.includes('write_file'));
+  assert.ok(data.tools.includes('fetch_url'));
+  assert.ok(data.skills.some((skill) => skill.name === 'basicagent'), 'bundled skill is visible');
+
+  assert.equal((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status, 404, 'path traversal blocked');
+  assert.equal((await fetch(`${base}/api/nope`, { headers: auth })).status, 404);
+  assert.equal((await fetch(`${base}/`, { method: 'POST' })).status, 405);
+});
+
+test('chat streams events, persists the session and lists it', async (t) => {
+  const provider = await startFakeProvider([[textChunk('Hello from the fake.'), finishChunk('stop')]]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, { baseUrl: provider.baseUrl });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  assert.equal(session.status, 200);
+  assert.match(session.data.id, /^\d{14}-[0-9a-f]{4}$/);
+
+  const result = await stream(session.data.id, 'say hi');
+  assert.equal(result.status, 200);
+  const types = result.events.map((event) => event.type);
+  assert.deepEqual(types, ['iteration', 'assistant_delta', 'done']);
+  assert.equal(result.events[1].text, 'Hello from the fake.');
+  assert.equal(result.events[2].text, 'Hello from the fake.');
+
+  const sessionFile = join(dir, 'data', 'sessions', `${session.data.id}.jsonl`);
+  assert.ok(existsSync(sessionFile), 'session is persisted');
+  const lines = readFileSync(sessionFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(lines.map((entry) => entry.role), ['user', 'assistant']);
+
+  const list = await json('/api/sessions');
+  assert.equal(list.data.memoryEnabled, true);
+  assert.equal(list.data.sessions.length, 1);
+  assert.equal(list.data.sessions[0].id, session.data.id);
+  assert.equal(list.data.sessions[0].messages, 2);
+  assert.equal(list.data.sessions[0].title, 'say hi');
+
+  const transcript = await json(`/api/sessions/${session.data.id}`);
+  assert.equal(transcript.data.messages.length, 2);
+  assert.equal(transcript.data.messages[0].role, 'user');
+  assert.ok(transcript.data.messages[0].ts, 'transcript includes timestamps');
+
+  const missing = await json('/api/chat', { method: 'POST', body: { message: 'hi' } });
+  assert.equal(missing.status, 400);
+  const empty = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: '   ' } });
+  assert.equal(empty.status, 400);
+});
+
+test('tool calls are executed, audited and streamed over the API', async (t) => {
+  const provider = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"hello.txt","content":"hi from web"}' }), finishChunk('tool_calls')],
+    [textChunk('Created hello.txt.'), finishChunk('stop')]
+  ]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, { baseUrl: provider.baseUrl });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  const result = await stream(session.data.id, 'create hello.txt');
+  const toolEnd = result.events.find((event) => event.type === 'tool_end');
+  assert.ok(toolEnd, 'tool_end event present');
+  assert.equal(toolEnd.name, 'write_file');
+  assert.equal(toolEnd.ok, true);
+  assert.equal(typeof toolEnd.durationMs, 'number');
+  assert.equal(readFileSync(join(dir, 'hello.txt'), 'utf8'), 'hi from web');
+
+  const auditPath = join(dir, 'data', 'audit.jsonl');
+  assert.ok(existsSync(auditPath), 'audit log written');
+  const entry = JSON.parse(readFileSync(auditPath, 'utf8').trim().split('\n')[0]);
+  assert.equal(entry.tool, 'write_file');
+  assert.equal(entry.ok, true);
+
+  const audit = await json('/api/audit');
+  assert.equal(audit.status, 200);
+  assert.equal(audit.data.total, 1);
+  assert.equal(audit.data.entries[0].tool, 'write_file');
+  const filtered = await json('/api/audit?tool=write_file&ok=true');
+  assert.equal(filtered.data.total, 1);
+  const failed = await json('/api/audit?ok=false');
+  assert.equal(failed.data.total, 0);
+});
+
+test('approval pauses the turn until the browser approves', async (t) => {
+  const provider = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"protected.txt","content":"approved"}' }), finishChunk('tool_calls')],
+    [textChunk('Written.'), finishChunk('stop')]
+  ]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, {
+    baseUrl: provider.baseUrl,
+    config: { tools: { files: { roots: [{ path: '.', access: 'rw' }], protectedPaths: ['protected.txt'] } } }
+  });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  let approvalResolve;
+  const approvalSeen = new Promise((resolve) => { approvalResolve = resolve; });
+  const streamPromise = stream(session.data.id, 'write protected.txt', {
+    onEvent: (event) => {
+      if (event.type === 'approval') approvalResolve(event);
+    }
+  });
+
+  const approval = await approvalSeen;
+  assert.match(approval.description, /protected\.txt/);
+  assert.equal(typeof approval.id, 'string');
+
+  const answer = await json(`/api/approvals/${approval.id}`, { method: 'POST', body: { approved: true } });
+  assert.equal(answer.status, 200);
+  assert.equal((await json(`/api/approvals/${approval.id}`, { method: 'POST', body: { approved: true } })).status, 404, 'approvals cannot be answered twice');
+
+  const result = await streamPromise;
+  assert.ok(result.events.some((event) => event.type === 'approval_result' && event.approved === true));
+  const toolEnd = result.events.find((event) => event.type === 'tool_end');
+  assert.equal(toolEnd.ok, true);
+  assert.equal(readFileSync(join(dir, 'protected.txt'), 'utf8'), 'approved');
+});
+
+test('denied approval blocks the guarded write', async (t) => {
+  const provider = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"protected.txt","content":"nope"}' }), finishChunk('tool_calls')],
+    [textChunk('I did not write it.'), finishChunk('stop')]
+  ]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, {
+    baseUrl: provider.baseUrl,
+    config: { tools: { files: { roots: [{ path: '.', access: 'rw' }], protectedPaths: ['protected.txt'] } } }
+  });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  let approvalResolve;
+  const approvalSeen = new Promise((resolve) => { approvalResolve = resolve; });
+  const streamPromise = stream(session.data.id, 'write protected.txt', {
+    onEvent: (event) => {
+      if (event.type === 'approval') approvalResolve(event);
+    }
+  });
+  const approval = await approvalSeen;
+  await json(`/api/approvals/${approval.id}`, { method: 'POST', body: { approved: false } });
+
+  const result = await streamPromise;
+  const toolEnd = result.events.find((event) => event.type === 'tool_end');
+  assert.equal(toolEnd.ok, false);
+  assert.ok(!existsSync(join(dir, 'protected.txt')), 'file is not written');
+  assert.equal((await json('/api/approvals/does-not-exist', { method: 'POST', body: { approved: true } })).status, 404);
+});
+
+test('a running turn reports busy and can be aborted', async (t) => {
+  const provider = await startHangingProvider(t);
+  const { json, stream } = await setup(t, { baseUrl: provider.baseUrl });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  let iterationResolve;
+  const iterationSeen = new Promise((resolve) => { iterationResolve = resolve; });
+  const streamPromise = stream(session.data.id, 'hang', {
+    onEvent: (event) => {
+      if (event.type === 'iteration') iterationResolve();
+    }
+  });
+
+  await iterationSeen;
+  const busy = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: 'again' } });
+  assert.equal(busy.status, 409);
+
+  const abort = await json('/api/chat/abort', { method: 'POST', body: { sessionId: session.data.id } });
+  assert.equal(abort.status, 200);
+  const result = await streamPromise;
+  assert.ok(result.events.some((event) => event.type === 'aborted'), 'aborted event sent');
+});
+
+test('facts can be listed, added and removed', async (t) => {
+  const { dir, json } = await setup(t);
+
+  assert.deepEqual((await json('/api/facts')).data.facts, []);
+
+  const added = await json('/api/facts', { method: 'PUT', body: { key: 'editor', value: 'nvim' } });
+  assert.equal(added.status, 200);
+  assert.equal(added.data.fact.key, 'editor');
+  assert.equal((await json('/api/facts', { method: 'PUT', body: { key: 'editor' } })).status, 400);
+
+  const listed = await json('/api/facts');
+  assert.equal(listed.data.facts.length, 1);
+  assert.equal(listed.data.facts[0].value, 'nvim');
+  assert.ok(existsSync(join(dir, 'data', 'facts.jsonl')));
+
+  const removed = await json('/api/facts/editor', { method: 'DELETE' });
+  assert.equal(removed.data.removed, true);
+  assert.equal((await json('/api/facts/editor', { method: 'DELETE' })).data.removed, false);
+  assert.deepEqual((await json('/api/facts')).data.facts, []);
+});
+
+test('config can be read, validated, saved and reloaded with key preservation', async (t) => {
+  const { dir, json } = await setup(t, { config: { provider: { apiKey: 'sekret-key-1234567890' } } });
+  const dataDir = join(dir, 'data');
+
+  const initial = await json('/api/config');
+  assert.equal(initial.data.found, true);
+  assert.equal(initial.data.apiKeySet, true);
+  assert.equal(initial.data.raw.provider.apiKey, '', 'the raw key is never sent');
+  assert.match(initial.data.effective.provider.apiKey, /^sek.../, 'the effective key is masked');
+  assert.ok(!initial.data.effective.provider.apiKey.includes('1234567890'), 'the full key is never sent');
+  assert.ok(initial.data.path.endsWith('config.json'));
+
+  const invalid = await json('/api/config', { method: 'PUT', body: { config: { provider: { temperature: 9 } } } });
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.data.error, /temperature/);
+
+  const saved = await json('/api/config', {
+    method: 'PUT',
+    body: { config: { provider: { model: 'new-model', apiKey: '' }, skills: { paths: [] }, memory: { dir: dataDir } } }
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.equal(saved.data.effective.provider.model, 'new-model');
+
+  const rawOnDisk = JSON.parse(readFileSync(initial.data.path, 'utf8'));
+  assert.equal(rawOnDisk.provider.model, 'new-model');
+  assert.equal(rawOnDisk.provider.apiKey, 'sekret-key-1234567890', 'empty key keeps the stored one');
+  assert.equal(statSync(initial.data.path).mode & 0o777, 0o600);
+
+  const status = await json('/api/status');
+  assert.equal(status.data.model, 'new-model', 'the server reloaded the config');
+
+  const cleared = await json('/api/config', {
+    method: 'PUT',
+    body: { config: { provider: { apiKey: null }, skills: { paths: [] }, memory: { dir: dataDir } } }
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.data.apiKeySet, false);
+  assert.ok(!('apiKey' in JSON.parse(readFileSync(initial.data.path, 'utf8')).provider), 'null clears the key');
+});
+
+test('memory disabled turns off facts, sessions and the audit API', async (t) => {
+  const provider = await startFakeProvider([[textChunk('No memory here.'), finishChunk('stop')]]);
+  t.after(() => provider.close());
+  const { json, stream } = await setup(t, { baseUrl: provider.baseUrl, config: { memory: { enabled: false } } });
+
+  const status = await json('/api/status');
+  assert.equal(status.data.memoryEnabled, false);
+  assert.equal(status.data.dataDir, null);
+
+  assert.equal((await json('/api/facts')).status, 400);
+  assert.equal((await json('/api/audit')).status, 400);
+  const sessions = await json('/api/sessions');
+  assert.deepEqual(sessions.data, { memoryEnabled: false, sessions: [] });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  assert.deepEqual(session.data.messages, []);
+  const result = await stream(session.data.id, 'hello');
+  assert.ok(result.events.some((event) => event.type === 'done'));
+});

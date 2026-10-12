@@ -120,6 +120,20 @@ export class Memory {
 
   // Facts ------------------------------------------------------------------
 
+  // Re-read facts.jsonl from disk. Used by long-running processes (the web
+  // server) when another session may have changed the shared fact store.
+  reloadFacts() {
+    this.facts = this.#loadFacts();
+    return this.facts.size;
+  }
+
+  // Remove one fact by its exact key. Returns true when it existed.
+  deleteFact(key) {
+    const existed = this.facts.delete(String(key ?? ''));
+    if (existed) this.#saveFacts();
+    return existed;
+  }
+
   remember(key, value) {
     const cleanKey = bounded(String(key ?? '').trim(), 200);
     const cleanValue = bounded(String(value ?? '').trim(), 3000);

@@ -4,6 +4,9 @@ A small, dependency-free command line agent. It runs an OpenAI-compatible
 model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
 file tools, shell access, SKILL.md skills and persistent memory.
 
+It also ships a local web interface (chat, settings, memory and audit log)
+with the same zero-dependency promise: Node 24+ built-ins only.
+
 ## Requirements
 
 It only requires Node 24 or newer (declared in `package.json` engines).
@@ -46,6 +49,11 @@ Done: added provider.timeoutMs handling and all tests pass.
   `--continue` or `--session`.
 - **Interactive and scriptable** — REPL for conversation, one-shot mode for
   automation, `--json` event stream for embedding.
+- **Local web interface** — `basicagent-web` serves a browser UI on
+  `127.0.0.1` (chat with live streaming and inline approvals, a settings
+  editor for the config file, and browsable facts, sessions and the audit
+  log). Token-protected, loopback-only by default, no framework and no build
+  step.
 - **Guardrails you can see** — approval prompts, an append-only
   `audit.jsonl`, bounded outputs and a shell tool that is off by default.
 - **Zero dependencies** — Node 24+ built-ins only.
@@ -65,6 +73,31 @@ node bin/basicagent.mjs --model gemma4:31b "say hello"
 Then copy `config.example.json` to `~/.config/basicagent/config.json` to make
 it permanent. Full provider recipes and configuration are in the
 [tutorial](docs/TUTORIAL.md).
+
+## Web interface
+
+```sh
+node bin/basicagent-web.mjs        # or: npm run web
+```
+
+The server binds to `127.0.0.1:8787` by default and prints a URL with an
+access token in the fragment; open it to get the interface. The token is
+required for every `/api` request, so other local programs (and websites
+trying DNS rebinding) cannot drive the agent. `--port`, `--host` and
+`--token` are available if you need them; a non-loopback `--host` drops the
+host/origin checks that only make sense for local use.
+
+The UI has three tabs:
+
+- **Chat** — sessions in the sidebar, streamed answers, tool calls with their
+  arguments and results, and approve/deny buttons when a guarded action needs
+  confirmation. Stop cancels the running turn; closing the tab aborts it.
+- **Settings** — edits the same `config.json` the CLI reads (provider, agent
+  limits, file roots, shell, web tool, skills, memory). Saving validates the
+  result, writes the file atomically and live-reloads the agent. The API key
+  is never sent to the browser; leave the field empty to keep it.
+- **Memory** — facts (add/delete), session transcripts and the audit log,
+  all straight from the JSONL files.
 
 ## Documentation
 
@@ -94,6 +127,17 @@ basicagent [options] [prompt]
   --no-web          disable the fetch_url web tool for this run
   --json            JSON-lines event output (for scripts)
   --yes             auto-approve guarded actions without asking (dangerous)
+```
+
+The web server is a separate command:
+
+```
+basicagent-web [options]
+
+  --port <number>   port to listen on (default 8787)
+  --host <address>  address to bind (default 127.0.0.1)
+  --token <string>  fixed access token (default: random, printed at startup)
+  --config/--cwd/--data-dir/--model/--base-url/--api-key/--no-web
 ```
 
 ## Development

@@ -29,17 +29,30 @@ developer and to an AI agent that is asked to modify this project.
                  |   src/memory     |  JSONL facts + sessions
                  |   src/prompt     |  system prompt assembly
                  +------------------+
+
+   browser  --->  bin/basicagent-web  --->  src/web/server  --->  src/web/api
+                  (http server u.i.)        (routing, auth)       (JSON endpoints)
+                                                 |
+                                                 v
+                                          src/web/session         one Agent + Memory
+                                          (WebSession manager)    per conversation
 ```
 
 There is no framework and no dependency: Node's built-in `fetch`, `readline`,
-`spawn`, `AbortSignal` and `node:test` do all the work. `package.json` has no
-`dependencies`.
+`spawn`, `http`, `AbortSignal` and `node:test` do all the work. `package.json`
+has no `dependencies`.
 
 ## Module map
 
 | File | Responsibility |
 | --- | --- |
 | `bin/basicagent.mjs` | CLI entry point. Argument parsing, config loading, REPL, one-shot and `--json` modes, slash commands, Ctrl+C handling. All user-visible behavior lives here. |
+| `bin/basicagent-web.mjs` | Web entry point. Flag parsing, token generation, startup banner, signal handling. |
+| `src/web/server.mjs` | HTTP server: static files from `web/`, host/origin checks, bearer-token auth for `/api`, routing to the API. |
+| `src/web/api.mjs` | JSON endpoints: status, chat streaming, approvals, sessions, facts, audit, config read/write. |
+| `src/web/session.mjs` | `WebSession` (one Agent + Memory + registry per conversation) and `SessionManager`; the approval bridge to the browser; disk helpers for browsing sessions. |
+| `src/web/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
+| `web/` | The frontend: hand-written HTML/CSS/JS, no build step. `web/assets/css/tokens.css` and the Marcellus SC font are copied from henksys.com so the UI matches the site's look; sync them when the site changes. |
 | `src/config.mjs` | Built-in defaults, config file loading and merging (defaults <- file <- env <- flags), validation and path normalization. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |
 | `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the failure circuit breaker and context trimming. Also defines the event stream. |
@@ -99,10 +112,52 @@ also written to stdout as one JSON object per line:
 | `warning` | `message` |
 | `done` | `text` |
 | `error` | `message` |
-| `approval` | `description`, `approved`, `automatic` |
+| `approval` | `description`, `approved`, `automatic` (CLI) |
+| `approval` | `id`, `description`, `automatic` (web; answer with `POST /api/approvals/:id`) |
+| `approval_result` | `id`, `approved` (web only) |
+| `aborted` | (web only; the turn was cancelled) |
 
 Scripts should treat `done` as the final assistant answer and `error` as a
 failed run (the CLI also exits 1).
+
+## Web interface
+
+`basicagent-web` serves the UI in `web/` plus a JSON API on loopback
+(default `127.0.0.1:8787`) and requires `Authorization: Bearer <token>` on
+every `/api` request. Static files are deliberately unauthenticated (no
+secrets); the shell can be opened by anything, the API cannot.
+
+Security model — the API can drive an agent with file and shell tools, so it
+is treated like local shell access:
+
+- Host header must be the loopback address the server is bound to (blocks
+  DNS-rebinding from web pages); cross-origin requests to `/api` are rejected.
+- There are no cookies, so there is no CSRF surface; the token travels in the
+  URL fragment (never sent to the server) and is kept in `sessionStorage`.
+- `--host` with a non-loopback address skips the Host/Origin checks (the
+  user's explicit choice) but never the token.
+- All model and tool output is rendered with `textContent`, never
+  `innerHTML`.
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /api/status` | model, cwd, data dir, tools, skills, last session. |
+| `POST /api/chat` | one turn; NDJSON stream with the events above. 409 while busy. |
+| `POST /api/chat/abort` | cancels the running turn (also on client disconnect). |
+| `POST /api/approvals/:id` | answers a paused approval; expired/unknown ids 404. |
+| `GET/POST /api/sessions`, `GET /api/sessions/:id` | session list and transcripts from `sessions/*.jsonl`. |
+| `GET/PUT /api/facts`, `DELETE /api/facts/:key` | fact store via `Memory` (exact-key delete). |
+| `GET /api/audit` | parsed `audit.jsonl`, newest first, `limit`/`tool`/`ok` filters. |
+| `GET/PUT /api/config` | raw file + effective (masked) config; PUT validates, writes atomically and live-reloads every session. |
+
+Sessions are never replayed from tool traffic: a `WebSession` loads only the
+persisted user/assistant text, exactly like `--session` in the CLI. Approvals
+and the API event objects differ slightly from the CLI (`id` instead of
+`approved`), noted in the event table. Facts are shared between sessions
+through `facts.jsonl`; each turn calls `Memory.reloadFacts()` so tabs see
+other sessions' changes. Concurrent turns in different tabs can still race on
+the last write (atomic rename, last writer wins) — acceptable for a
+single-user local tool.
 
 ## Provider contract
 
@@ -293,9 +348,9 @@ defaults, config file, environment (`BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`,
 
 ## Testing
 
-- `npm test` — 45 offline tests: config merging, SSE parsing, the agent loop,
-  the path policy, skills, memory-adjacent behavior and the CLI end to end
-  against a fake in-process provider.
+- `npm test` — 104 offline tests: config merging, SSE parsing, the agent loop,
+  the path policy, skills, memory, the web server (auth, streaming, approvals,
+  config save) and the CLI end to end against a fake in-process provider.
 - `npm run test:live` — opt-in integration test against Ollama Cloud
   (`OLLAMA_API_KEY_CLOUD`, default model `gemma4:31b`). It creates a file with
   `write_file` and reads it back with `read_file`.
