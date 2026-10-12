@@ -33,6 +33,28 @@
     node.className = `status-line ${kind || ''}`.trim();
   }
 
+  let toastTimer = null;
+
+  function hideToast() {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    $('#toast').hidden = true;
+  }
+
+  function showToast(text, kind = 'ok') {
+    const toast = $('#toast');
+    toast.textContent = text;
+    toast.className = `toast ${kind || ''}`.trim();
+    toast.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toast.hidden = true;
+    }, 4500);
+  }
+
+  $('#toast').addEventListener('click', hideToast);
+
   function formatTime(iso) {
     if (!iso) return '';
     const date = new Date(iso);
@@ -136,6 +158,7 @@
   async function loadStatus() {
     status = await api('/api/status');
     $('#model-chip').textContent = status.model;
+    $('#footer-version').textContent = status.version ? `v${status.version}` : '';
     $('#data-dir').textContent = status.dataDir || 'memory disabled';
     $('#chat-sub').textContent = `${status.model} · ${status.cwd}`;
     return status;
@@ -586,20 +609,28 @@
       const payload = await api('/api/config', { method: 'PUT', body: { config: raw } });
       fillSettings(payload);
       setStatus($('#settings-status'), 'Settings saved. The running agent was reloaded.', 'ok');
+      showToast('Settings saved. The running agent was reloaded.', 'ok');
       await loadStatus();
     } catch (error) {
       setStatus($('#settings-status'), `Could not save: ${error.message}`, 'error');
+      showToast(`Could not save: ${error.message}`, 'error');
     }
   }
 
-  async function loadSettings() {
+  async function loadSettings({ notify = false } = {}) {
     try {
       const payload = await api('/api/config');
       fillSettings(payload);
-      if (payload.parseError) setStatus($('#settings-status'), payload.parseError, 'error');
-      else setStatus($('#settings-status'), '', '');
+      if (payload.parseError) {
+        setStatus($('#settings-status'), payload.parseError, 'error');
+        if (notify) showToast(payload.parseError, 'error');
+      } else {
+        setStatus($('#settings-status'), '', '');
+        if (notify) showToast('Settings reloaded from disk.', 'ok');
+      }
     } catch (error) {
       setStatus($('#settings-status'), error.message, 'error');
+      if (notify) showToast(error.message, 'error');
     }
   }
 
@@ -610,12 +641,13 @@
       raw = collectSettings();
     } catch (error) {
       setStatus($('#settings-status'), error.message, 'error');
+      showToast(error.message, 'error');
       return;
     }
     saveSettings(raw);
   });
 
-  $('#settings-reload').addEventListener('click', () => loadSettings());
+  $('#settings-reload').addEventListener('click', () => loadSettings({ notify: true }));
   $('#add-root').addEventListener('click', () => addRootRow());
 
   $('#raw-save').addEventListener('click', () => {
@@ -624,6 +656,7 @@
       parsed = JSON.parse($('#raw-config').value);
     } catch (error) {
       setStatus($('#settings-status'), `Raw JSON is not valid: ${error.message}`, 'error');
+      showToast(`Raw JSON is not valid: ${error.message}`, 'error');
       return;
     }
     saveSettings(parsed);
