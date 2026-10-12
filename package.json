@@ -1,6 +1,6 @@
 {
   "name": "basicagent",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A small, dependency-free command line agent with file tools, skills and OpenAI-compatible LLM providers.",
   "type": "module",
   "bin": {
