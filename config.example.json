@@ -5,7 +5,7 @@
     "apiKeyEnv": "BASICAGENT_API_KEY",
     "model": "qwen3:8b",
     "temperature": 0.2,
-    "maxTokens": 2048,
+    "maxTokens": 4096,
     "timeoutMs": 120000,
     "toolChoice": null,
     "includeUsage": false

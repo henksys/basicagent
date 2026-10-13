@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // File tools with a root-based access policy.
 //
 // Every path an agent touches passes through checkAccess():

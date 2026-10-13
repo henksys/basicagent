@@ -7,7 +7,23 @@ A five minute setup guide, then the features you will actually use.
 - **Node.js 24 or newer** (`node --version`). Nothing else: no npm install, no
   dependencies, no build step.
 
-## 1. Run it
+## 1. Set it up
+
+The guided setup walks you through everything with a handful of questions
+(provider, model, API key, max tokens, shell access, config and data
+directories), writes the config file, tests the connection and then offers to
+start the web interface in your browser:
+
+```sh
+node bin/basicagent-setup.mjs     # or: npm run setup
+```
+
+Every question shows a `[default]`; press Enter to accept it. The defaults
+come from your existing config file, or from `config.example.json` on a fresh
+install. For a local Ollama the whole setup is Enter-only. If you prefer to
+configure by hand, section 3 lists the provider recipes.
+
+## 2. Run it
 
 From the project directory:
 
@@ -29,12 +45,13 @@ node bin/basicagent.mjs "list the files in this directory and summarize the proj
 ```
 
 Without configuration basicagent expects a local Ollama at
-`http://localhost:11434/v1`. Pick a provider recipe below, or jump to the
-web interface in section 4 if you prefer a browser.
+`http://localhost:11434/v1`; run the setup in section 1, or pick a provider
+recipe in section 3.
 
-## 2. Pick a provider
+## 3. Pick a provider
 
-Create the config directory and copy the example:
+The setup in section 1 writes this for you; these are the recipes for a manual
+config file. Create the config directory and copy the example:
 
 ```sh
 mkdir -p ~/.config/basicagent
@@ -113,7 +130,7 @@ Only the persona paragraph is replaced; the environment, skills and safety
 sections are still appended. The bundled `basicagent` self-help skill also
 follows the configured persona while keeping the program's paths and tooling.
 
-## 3. Use the REPL
+## 4. Use the REPL
 
 ```sh
 basicagent
@@ -149,9 +166,10 @@ Commands:
 
 Ctrl+C cancels the running turn, not the program.
 
-## 4. Use the web interface
+## 5. Use the web interface
 
-basicagent also ships a browser interface for the same agent:
+basicagent also ships a browser interface for the same agent (the setup in
+section 1 can start it for you):
 
 ```sh
 node bin/basicagent-web.mjs     # or: npm run web
@@ -166,7 +184,9 @@ too. The interface has three tabs:
 - **Chat** — sessions in a collapsible sidebar, streamed answers, every tool
   call with its arguments and result, and approve/deny buttons when a guarded
   action asks. Stop cancels the running turn and closing the tab aborts it.
-  It uses the same sessions as the CLI, so you can switch between the two.
+  It uses the same sessions as the CLI, so you can switch between the two. A
+  small context gauge in the composer shows how full the auto-trim budget
+  (`agent.contextChars`) is.
 - **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
   agent limits, file roots, shell, web tool, skills, memory). Saving validates
   the values, writes the file and live-reloads the running agent. The API key
@@ -183,7 +203,7 @@ DNS-rebinding attempts from other local pages. There are no cookies (the
 token lives in the URL fragment and `sessionStorage`), and everything the
 agent renders is inserted as text, never HTML.
 
-## 5. One-shot and scripting
+## 6. One-shot and scripting
 
 ```sh
 # Answer on stdout, tool trace on stderr:
@@ -205,7 +225,7 @@ an `id` that is answered with `POST /api/approvals/:id`.
 One-shot mode never waits for approval. Actions that need approval are denied
 unless you pass `--yes` (only do that in trusted, non-interactive contexts).
 
-## 6. Skills
+## 7. Skills
 
 Skills are folders with a `SKILL.md` (frontmatter + markdown instructions).
 basicagent injects only their name and description into the prompt and loads
@@ -251,7 +271,7 @@ EOF
 Then `/reload` in the REPL (or just start a new run). See
 `skills/example/SKILL.md` for a fuller template.
 
-## 7. Guardrails
+## 8. Guardrails
 
 ```json
 "tools": {
@@ -296,7 +316,7 @@ Then `/reload` in the REPL (or just start a new run). See
 - Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`,
   including approval requests and their answers.
 
-## 8. Memory
+## 9. Memory
 
 basicagent saves long-term facts (via the `remember` tool) and user/assistant
 text per conversation session under `$XDG_DATA_HOME/basicagent` (falling back
@@ -330,7 +350,7 @@ Ask the agent to "remember that I prefer tabs" and it stores a fact; ask it to
 only user/assistant text, not tool traffic. Everything is plain JSONL — grep
 or delete files directly if you prefer.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -348,7 +368,7 @@ or delete files directly if you prefer.
 | `Unsupported content type` when fetching | Only html, xhtml, xml, plain, markdown and JSON are accepted. |
 | Timeouts on slow models | Raise `provider.timeoutMs`. |
 
-## 10. Tests
+## 11. Tests
 
 ```sh
 npm test          # offline suite, no network

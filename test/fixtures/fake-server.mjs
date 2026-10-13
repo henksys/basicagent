@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Fixtures for tests: a tiny OpenAI-compatible SSE server.
 //
 // Each entry of `script` is the response for one request, either:

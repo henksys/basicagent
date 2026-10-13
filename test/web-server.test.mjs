@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
@@ -151,6 +151,7 @@ test('status and static files', async (t) => {
   assert.equal(status, 200);
   assert.equal(data.model, 'fake-model');
   assert.equal(data.memoryEnabled, true);
+  assert.equal(data.contextChars, 100000);
   assert.ok(data.tools.includes('write_file'));
   assert.ok(data.tools.includes('fetch_url'));
   assert.ok(data.skills.some((skill) => skill.name === 'basicagent'), 'bundled skill is visible');
@@ -168,11 +169,13 @@ test('chat streams events, persists the session and lists it', async (t) => {
   const session = await json('/api/sessions', { method: 'POST', body: {} });
   assert.equal(session.status, 200);
   assert.match(session.data.id, /^\d{14}-[0-9a-f]{4}$/);
+  assert.equal(session.data.contextSize, 0);
 
   const result = await stream(session.data.id, 'say hi');
   assert.equal(result.status, 200);
   const types = result.events.map((event) => event.type);
   assert.deepEqual(types, ['iteration', 'assistant_delta', 'done']);
+  assert.ok(Number.isInteger(result.events[0].contextSize) && result.events[0].contextSize > 0, 'iterations carry the context size');
   assert.equal(result.events[1].text, 'Hello from the fake.');
   assert.equal(result.events[2].text, 'Hello from the fake.');
 
@@ -192,6 +195,7 @@ test('chat streams events, persists the session and lists it', async (t) => {
   assert.equal(transcript.data.messages.length, 2);
   assert.equal(transcript.data.messages[0].role, 'user');
   assert.ok(transcript.data.messages[0].ts, 'transcript includes timestamps');
+  assert.ok(transcript.data.contextSize > 0, 'stored sessions report a context size');
 
   const missing = await json('/api/chat', { method: 'POST', body: { message: 'hi' } });
   assert.equal(missing.status, 400);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
-// Read/validate/write the raw config file for the web settings tab.
+// Copyright (C) 2026 Henk Duisterwinkel
+// Read/validate/write the raw config file (used by the web settings tab and
+// by basicagent-setup).
 //
 // The config file keeps the user's own JSON (relative paths, "~" and all);
 // validation happens on a merged copy (DEFAULTS + file) with the same
@@ -10,7 +11,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DEFAULTS, deepMerge, normalizeConfig } from '../config.mjs';
+import { DEFAULTS, deepMerge, normalizeConfig } from './config.mjs';
 
 // Parse a config file. Returns { raw, found }. A missing file is fine.
 export function readConfigFile(path) {

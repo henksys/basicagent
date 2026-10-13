@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Open a URL in the user's default browser.
 //
 // Node has no built-in browser launcher, so this shells out to the platform

@@ -516,6 +516,8 @@ code {
 .composer textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; }
 .composer-hint { font-size: 0.78rem; color: var(--fg-faint); margin-right: auto; }
+.context-gauge { font-family: var(--font-mono); font-size: 0.72rem; color: var(--fg-faint); white-space: nowrap; }
+.context-gauge.full { color: var(--error); }
 
 /* ===== Memory ===== */
 

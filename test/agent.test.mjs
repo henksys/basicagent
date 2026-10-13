@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Agent, AgentError, parseToolArguments, trimHistory } from '../src/agent.mjs';
+import { Agent, AgentError, contextSize, parseToolArguments, trimHistory } from '../src/agent.mjs';
 
 // A scripted stand-in for src/provider.mjs.
 class FakeProvider {
@@ -152,4 +152,24 @@ test('trimHistory drops old tool results before old messages', () => {
   assert.equal(toolMessage.content, '[tool result trimmed to save context]');
   assert.equal(trimmed.length, messages.length, 'structure is preserved while trimming');
   assert.equal(trimmed.at(-1).content, 'second question');
+});
+
+test('contextSize is the trim metric and every iteration reports it', async () => {
+  const provider = new FakeProvider([
+    { content: '', toolCalls: [toolCall('fake_tool', { x: 1 })], finishReason: 'tool_calls' },
+    { content: 'Done.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const registry = makeRegistry();
+  const events = [];
+  const agent = new Agent({ provider, registry, config: makeConfig(), emit: (event) => events.push(event), approve: async () => true });
+  agent.setSystem('system');
+  await agent.run('hello');
+
+  const message = { role: 'user', content: 'a' };
+  assert.equal(contextSize([message]), JSON.stringify(message).length);
+
+  const iterations = events.filter((event) => event.type === 'iteration');
+  assert.equal(iterations.length, 2);
+  assert.ok(Number.isInteger(iterations[0].contextSize) && iterations[0].contextSize > 0);
+  assert.ok(iterations[1].contextSize > iterations[0].contextSize, 'the tool result grows the measured context');
 });

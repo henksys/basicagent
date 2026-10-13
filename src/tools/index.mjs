@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Tool registry: validation, dispatch and the audit log.
 //
 // Every tool is a plain object:

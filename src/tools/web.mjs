@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // The fetch_url web tool: zero-dependency page fetching with guardrails.
 //
 // Design goals, in order:

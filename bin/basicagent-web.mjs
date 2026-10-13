@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // basicagent web server.
 //
 // Usage:

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Provider client for any OpenAI-compatible /v1/chat/completions endpoint.
 //
 // Tested against Ollama (local and cloud), llama.cpp server, DeepSeek and

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Approval helper for policy-restricted operations (guarded writes, shell
 // commands). The CLI decides the mode:
 //

@@ -48,13 +48,15 @@ has no `dependencies`.
 | --- | --- |
 | `bin/basicagent.mjs` | CLI entry point. Argument parsing, config loading, REPL, one-shot and `--json` modes, slash commands, Ctrl+C handling. All user-visible behavior lives here. |
 | `bin/basicagent-web.mjs` | Web entry point. Flag parsing, token generation, startup banner, browser launch, signal handling. |
+| `bin/basicagent-setup.mjs` | Onboarding entry point. Readline questions, provider connection test, writes the config, offers to start the web server. |
+| `src/setup.mjs` | Setup logic without I/O: provider presets, base-config loading (existing file or `config.example.json`), answer merging, the provider test, summary lines. |
 | `src/web/server.mjs` | HTTP server: static files from `web/`, host/origin checks, bearer-token auth for `/api`, routing to the API. |
 | `src/web/api.mjs` | JSON endpoints: status, chat streaming, approvals, sessions, facts, audit, config read/write. |
 | `src/web/session.mjs` | `WebSession` (one Agent + Memory + registry per conversation) and `SessionManager`; the approval bridge to the browser; disk helpers for browsing sessions. |
-| `src/web/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
 | `src/web/open-browser.mjs` | Launches the token URL in the default browser (`xdg-open`/`open`/`start`); detached, failures are ignored. |
 | `web/` | The frontend: hand-written HTML/CSS/JS, no build step. `web/assets/css/tokens.css` and the Marcellus SC font are copied from henksys.com so the UI matches the site's look; sync them when the site changes. |
 | `src/config.mjs` | Built-in defaults, config file loading and merging (defaults <- file <- env <- flags), validation and path normalization. |
+| `src/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |
 | `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the failure circuit breaker and context trimming. Also defines the event stream. |
 | `src/tools/index.mjs` | Tool registry: schema validation, dispatch, per-call audit log. |
@@ -95,7 +97,9 @@ has no `dependencies`.
 - **Context trimming** (`agent.contextChars`): old tool results become a
   placeholder first, then whole old exchanges are dropped. Tool messages are
   removed together with the assistant message that requested them so the
-  provider never sees an orphaned `tool` message.
+  provider never sees an orphaned `tool` message. The same serialized-size
+  metric (`contextSize`) is reported on every `iteration` event and drives the
+  context gauge in the web interface.
 - **Abort**: Ctrl+C in the REPL (or SIGINT in one-shot) aborts the current
   `AbortSignal`; the provider stream and any running command are killed.
 
@@ -106,7 +110,7 @@ also written to stdout as one JSON object per line:
 
 | Event | Fields |
 | --- | --- |
-| `iteration` | `iteration` |
+| `iteration` | `iteration`, `contextSize` (serialized conversation chars) |
 | `assistant_delta` | `text` |
 | `tool_start` | `name`, `args` |
 | `tool_end` | `name`, `ok`, `durationMs`, `result` |

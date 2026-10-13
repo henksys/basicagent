@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Web sessions: one Agent + Memory + tool registry per conversation.
 //
 // The CLI builds and owns a single Agent for its whole process. The web
@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { Agent } from '../agent.mjs';
+import { Agent, contextSize } from '../agent.mjs';
 import { Memory, newSessionId, sanitizeSessionId } from '../memory.mjs';
 import { buildSystemPrompt } from '../prompt.mjs';
 import { Provider } from '../provider.mjs';
@@ -158,6 +158,12 @@ export class WebSession {
 
   info() {
     return { id: this.sessionId, busy: this.busy, messages: this.agent.messages.length };
+  }
+
+  // Serialized size of the live conversation; the same metric trimHistory
+  // uses (agent.contextChars), shown as the context gauge in the web UI.
+  contextSize() {
+    return contextSize(this.agent.messages);
   }
 }
 

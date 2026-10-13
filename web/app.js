@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // basicagent web — vanilla JavaScript, no dependencies.
 //
 // Talks to the server's JSON API with the bearer token from the URL fragment
@@ -161,12 +161,38 @@
     $('#footer-version').textContent = status.version ? `v${status.version}` : '';
     $('#data-dir').textContent = status.dataDir || 'memory disabled';
     $('#chat-sub').textContent = `${status.model} · ${status.cwd}`;
+    renderContextGauge();
     return status;
   }
 
   // ===== Chat =================================================================
 
-  const chat = { sessionId: null, busy: false, assistantEl: null, pendingTools: [] };
+  const chat = { sessionId: null, busy: false, assistantEl: null, pendingTools: [], contextSize: null };
+
+  // Compact character count for the context gauge (999, 1.5k, 25k).
+  function formatChars(value) {
+    const size = Number(value) || 0;
+    if (size < 1000) return String(size);
+    if (size < 10000) return `${(size / 1000).toFixed(1)}k`;
+    return `${Math.round(size / 1000)}k`;
+  }
+
+  // The gauge compares the serialized conversation size (the same metric the
+  // server uses to trim history) with the agent's auto-trim budget; at 100%
+  // the oldest messages are dropped before the next request.
+  function renderContextGauge() {
+    const gauge = $('#context-gauge');
+    const limit = status?.contextChars;
+    if (!limit || chat.contextSize == null) {
+      gauge.hidden = true;
+      return;
+    }
+    const percent = Math.min(100, Math.round((chat.contextSize / limit) * 100));
+    gauge.hidden = false;
+    gauge.textContent = `context ${percent}% (${formatChars(chat.contextSize)}/${formatChars(limit)} chars)`;
+    gauge.className = `context-gauge${percent >= 90 ? ' full' : ''}`;
+    gauge.title = "Serialized conversation size against the agent's auto-trim budget; at 100% the oldest messages are dropped.";
+  }
 
   function scrollMessages() {
     const messages = $('#messages');
@@ -268,6 +294,10 @@
     switch (event.type) {
       case 'iteration':
         setComposerHint(`working… (iteration ${event.iteration})`);
+        if (typeof event.contextSize === 'number') {
+          chat.contextSize = event.contextSize;
+          renderContextGauge();
+        }
         break;
       case 'assistant_delta': {
         // Keep the answer chronological: start a fresh bubble whenever the
@@ -385,19 +415,21 @@
 
   async function newSession() {
     const data = await api('/api/sessions', { method: 'POST', body: {} });
-    activateSession(data.id, data.messages);
+    activateSession(data.id, data.messages, data.contextSize ?? 0);
   }
 
   async function openSession(id) {
     const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    activateSession(data.id, data.messages);
+    activateSession(data.id, data.messages, data.contextSize ?? 0);
   }
 
-  function activateSession(id, messages) {
+  function activateSession(id, messages, contextSize = 0) {
     chat.sessionId = id;
     $('#messages').textContent = '';
     chat.assistantEl = null;
     chat.pendingTools = [];
+    chat.contextSize = contextSize;
+    renderContextGauge();
     $('#chat-title').textContent = id;
     if (messages && messages.length) {
       for (const message of messages) addMessage(message.role, message.content);
@@ -794,8 +826,10 @@
         chat.sessionId = null;
         chat.assistantEl = null;
         chat.pendingTools = [];
+        chat.contextSize = null;
         $('#messages').textContent = '';
         $('#chat-title').textContent = 'Chat';
+        renderContextGauge();
         addNotice('This session was deleted. The next message starts a new conversation.');
       }
       if (transcriptId === id) {

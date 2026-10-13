@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // The agent loop.
 //
 // One turn works like this:
@@ -37,15 +37,21 @@ export class AgentError extends Error {
 
 const TRIMMED_TOOL_RESULT = '[tool result trimmed to save context]';
 
+// Sum of the serialized message sizes. This is the metric trimHistory uses to
+// decide when to drop context, and the one the web interface shows as its
+// context gauge, so both always agree.
+export function contextSize(messages) {
+  return messages.reduce((total, message) => total + JSON.stringify(message).length, 0);
+}
+
 // Drop old context when the message history gets too large. Old tool results
 // are replaced by a placeholder first; after that the oldest exchanges are
 // removed, and tool messages always go together with their assistant message
 // so the provider never sees an orphaned tool result.
 export function trimHistory(messages, maxChars) {
   if (maxChars <= 0) return messages;
-  const size = (items) => items.reduce((total, message) => total + JSON.stringify(message).length, 0);
   const out = [...messages];
-  while (out.length > 2 && size(out) > maxChars) {
+  while (out.length > 2 && contextSize(out) > maxChars) {
     const toolIndex = out.findIndex((message) => message.role === 'tool' && message.content !== TRIMMED_TOOL_RESULT);
     if (toolIndex >= 0) {
       out[toolIndex] = { ...out[toolIndex], content: TRIMMED_TOOL_RESULT };
@@ -105,7 +111,7 @@ export class Agent {
 
     for (let iteration = 1; iteration <= limits.maxIterations; iteration++) {
       signal?.throwIfAborted();
-      this.emit({ type: 'iteration', iteration });
+      this.emit({ type: 'iteration', iteration, contextSize: contextSize(this.messages) });
 
       const result = await this.provider.chat({
         messages: this.#outgoing(),

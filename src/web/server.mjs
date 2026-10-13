@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // The web server: static files, security checks and the JSON API.
 //
 // Security model (this server can drive an agent with file and shell tools):

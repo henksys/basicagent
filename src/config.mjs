@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Configuration loading and validation.
 //
 // Precedence, lowest to highest:
@@ -38,7 +38,7 @@ export const DEFAULTS = Object.freeze({
     apiKeyEnv: 'BASICAGENT_API_KEY',
     model: 'qwen3:8b',
     temperature: 0.2,
-    maxTokens: 2048,
+    maxTokens: 4096,
     timeoutMs: 120000,
     // Ollama does not support tool_choice, so it stays null (omitted) by
     // default. Set to "auto", "required" or "none" for providers that do.

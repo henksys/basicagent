@@ -1,11 +1,12 @@
 {
   "name": "basicagent",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "A small, dependency-free command line agent with file tools, skills and OpenAI-compatible LLM providers.",
   "type": "module",
   "bin": {
     "basicagent": "bin/basicagent.mjs",
-    "basicagent-web": "bin/basicagent-web.mjs"
+    "basicagent-web": "bin/basicagent-web.mjs",
+    "basicagent-setup": "bin/basicagent-setup.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -13,7 +14,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "test:live": "node --test test/live/*.test.mjs",
-    "web": "node bin/basicagent-web.mjs"
+    "web": "node bin/basicagent-web.mjs",
+    "setup": "node bin/basicagent-setup.mjs"
   },
   "keywords": [
     "agent",

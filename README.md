@@ -49,11 +49,15 @@ Done: added provider.timeoutMs handling and all tests pass.
   `--continue` or `--session`.
 - **Interactive and scriptable** — REPL for conversation, one-shot mode for
   automation, `--json` event stream for embedding.
+- **Guided setup** — `basicagent-setup` asks for the provider, model, API key,
+  max tokens, shell access and the config/data directories, tests the
+  connection and can start the web interface when done. Enter accepts the
+  defaults from `config.example.json` or your existing config.
 - **Local web interface** — `basicagent-web` serves a browser UI on
   `127.0.0.1` (chat with live streaming and inline approvals, a settings
   editor for the config file, and browsable facts, sessions and the audit
   log). Token-protected, loopback-only by default, no framework and no build
-  step.
+  step; it opens in your default browser on startup.
 - **Guardrails you can see** — approval prompts, an append-only
   `audit.jsonl`, bounded outputs and a shell tool that is off by default.
 - **Zero dependencies** — Node 24+ built-ins only.
@@ -61,7 +65,10 @@ Done: added provider.timeoutMs handling and all tests pass.
 ## Quick start
 
 ```sh
-# local Ollama (default)
+# guided setup: writes the config, tests the provider, offers the web UI
+node bin/basicagent-setup.mjs        # or: npm run setup
+
+# or run directly; without a config it expects local Ollama
 node bin/basicagent.mjs "list the files here and summarize the project"
 
 # Ollama Cloud
@@ -70,9 +77,9 @@ BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
 node bin/basicagent.mjs --model gemma4:31b "say hello"
 ```
 
-Then copy `config.example.json` to `~/.config/basicagent/config.json` to make
-it permanent. Full provider recipes and configuration are in the
-[tutorial](docs/TUTORIAL.md).
+The setup writes `~/.config/basicagent/config.json` (copy
+`config.example.json` there to do it by hand). Full provider recipes and
+configuration are in the [tutorial](docs/TUTORIAL.md).
 
 ## Web interface
 
@@ -92,7 +99,8 @@ The UI has three tabs:
 
 - **Chat** — sessions in the sidebar, streamed answers, tool calls with their
   arguments and results, and approve/deny buttons when a guarded action needs
-  confirmation. Stop cancels the running turn; closing the tab aborts it.
+  confirmation. Stop cancels the running turn; closing the tab aborts it. A
+  context gauge shows how full the agent's auto-trim budget is.
 - **Settings** — edits the same `config.json` the CLI reads (provider, agent
   limits, file roots, shell, web tool, skills, memory). Saving validates the
   result, writes the file atomically and live-reloads the agent. The API key
@@ -142,6 +150,16 @@ basicagent-web [options]
   --config/--cwd/--data-dir/--model/--base-url/--api-key/--no-web
 ```
 
+The guided setup is its own command too:
+
+```
+basicagent-setup [options]
+
+  --config <file>  config file to create or edit (default ~/.config/basicagent/config.json)
+  --no-test        skip the provider connection test
+  --no-start       do not offer to start the web interface
+```
+
 ## Development
 
 ```sh
@@ -152,6 +170,8 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 ## License
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
+
+Copyright (C) 2026 Henk Duisterwinkel
 
 basicagent is an independent, from-scratch implementation. All code in this
 repository was written for this project; its design follows patterns common to

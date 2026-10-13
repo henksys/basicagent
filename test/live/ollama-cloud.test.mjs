@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Live integration test against Ollama Cloud's OpenAI-compatible endpoint.
 //
 // Skipped automatically unless OLLAMA_API_KEY_CLOUD is set. It makes a small

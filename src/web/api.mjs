@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // JSON API for the web interface.
 //
 // Routes (all under /api/, all requiring the bearer token):
@@ -25,12 +25,13 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { contextSize } from '../agent.mjs';
 import { loadConfig } from '../config.mjs';
 import { discoverSkills } from '../skills.mjs';
 import { createRegistry } from '../tools/index.mjs';
 import { mask } from '../util.mjs';
 import { lastSessionPointer, listSessions, readSessionEvents } from './session.mjs';
-import { readConfigFile, validateRawConfig, writeConfigFile } from './config-file.mjs';
+import { readConfigFile, validateRawConfig, writeConfigFile } from '../config-file.mjs';
 
 export const MAX_MESSAGE_CHARS = 100000;
 const AUDIT_LIMIT_DEFAULT = 200;
@@ -129,6 +130,7 @@ export function createApi({ state, manager, version }) {
       model: config.provider.model,
       baseUrl: config.provider.baseUrl,
       cwd: state.cwd,
+      contextChars: config.agent.contextChars,
       memoryEnabled: config.memory.enabled,
       dataDir: dir,
       configPath: config.paths.configPath,
@@ -226,7 +228,8 @@ export function createApi({ state, manager, version }) {
     const dir = memoryDir();
     sendJSON(res, 200, {
       id: session.sessionId,
-      messages: dir ? readSessionEvents(dir, session.sessionId) : []
+      messages: dir ? readSessionEvents(dir, session.sessionId) : [],
+      contextSize: session.contextSize()
     });
   }
 
@@ -240,7 +243,14 @@ export function createApi({ state, manager, version }) {
     } catch {
       return badRequest(res, 'Invalid session id');
     }
-    sendJSON(res, 200, { id, messages });
+    // A live session knows its exact message array (including tool traffic);
+    // for a stored transcript, the agent would load exactly these user and
+    // assistant objects when the session becomes live.
+    const live = manager.sessions.get(id);
+    const size = live
+      ? live.contextSize()
+      : contextSize(messages.map(({ role, content }) => ({ role, content })));
+    sendJSON(res, 200, { id, messages, contextSize: size });
   }
 
   function sessionDelete(res, path) {

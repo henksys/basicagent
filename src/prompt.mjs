@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // System prompt assembly.
 //
 // The prompt is rebuilt before every turn so freshly saved facts and skill

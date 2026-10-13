@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Memory tools: remember, search_memory and forget.
 //
 // These are thin wrappers over src/memory.mjs so the model can persist

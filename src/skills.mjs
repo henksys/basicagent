@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Henk
+// Copyright (C) 2026 Henk Duisterwinkel
 // Skills: reusable instruction documents the model can load on demand.
 //
 // A skill is a directory containing SKILL.md with YAML-ish frontmatter:
