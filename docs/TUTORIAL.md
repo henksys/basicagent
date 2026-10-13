@@ -158,9 +158,10 @@ node bin/basicagent-web.mjs     # or: npm run web
 ```
 
 It listens on `127.0.0.1:8787` by default and prints a URL that includes an
-access token in the fragment; open that URL (the token is required for every
-API request, and the unlock screen accepts it too). The interface has three
-tabs:
+access token in the fragment; it also opens that URL in your default browser
+automatically (pass `--no-open` to skip that, e.g. in scripts or over SSH).
+The token is required for every API request, and the unlock screen accepts it
+too. The interface has three tabs:
 
 - **Chat** — sessions in a collapsible sidebar, streamed answers, every tool
   call with its arguments and result, and approve/deny buttons when a guarded
@@ -174,7 +175,8 @@ tabs:
   transcripts and the audit log with filters.
 
 Options: `--port <number>` (default 8787), `--host <address>` (default
-`127.0.0.1`) and `--token <string>` (default: random, printed at startup).
+`127.0.0.1`), `--token <string>` (default: random, printed at startup) and
+`--no-open` (do not launch the browser).
 The server binds to loopback unless you pass a non-loopback `--host`. Every
 `/api` request needs the bearer token, and Host/Origin checks reject
 DNS-rebinding attempts from other local pages. There are no cookies (the

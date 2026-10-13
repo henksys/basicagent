@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
 import { loadConfig } from '../src/config.mjs';
+import { openBrowser } from '../src/web/open-browser.mjs';
 import { startWebServer } from '../src/web/server.mjs';
 
 const VERSION = pkg.version;
@@ -38,6 +39,7 @@ Options:
   --base-url <url>   Override the provider base URL
   --api-key <key>    Override the API key (prefer BASICAGENT_API_KEY)
   --no-web           Disable the fetch_url web tool
+  --no-open          Do not open the interface in the default browser
   -h, --help         Show this help
   -v, --version      Show the version
 
@@ -61,6 +63,7 @@ function parseFlags(argv) {
       'base-url': { type: 'string' },
       'api-key': { type: 'string' },
       'no-web': { type: 'boolean' },
+      'no-open': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' }
     }
@@ -128,9 +131,11 @@ async function main() {
     (config.memory.enabled ? `data       ${config.memory.dir}\n` : 'memory     disabled\n') +
     `listening  ${url}\n` +
     `token      ${token}\n\n` +
-    `Open ${tokenUrl}\n\n` +
-    `Press Ctrl+C to stop.\n`
+    `Open ${tokenUrl}\n` +
+    (values['no-open'] ? '' : 'Opening it in your default browser (use --no-open to skip).\n') +
+    `\nPress Ctrl+C to stop.\n`
   );
+  if (!values['no-open']) openBrowser(tokenUrl);
   if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
     process.stdout.write('Warning: the server is reachable from the network; keep the token secret.\n');
   }

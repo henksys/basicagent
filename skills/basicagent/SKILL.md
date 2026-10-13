@@ -101,8 +101,9 @@ log; each web turn re-reads `facts.jsonl` so tabs stay in sync.
 ## CLI
 
 REPL: `basicagent`. One-shot: `basicagent "prompt"`. Web interface:
-`basicagent-web` (or `npm run web`) serves `http://127.0.0.1:8787` by default;
-`--port`, `--host` and `--token` adjust it. Scripting:
+`basicagent-web` (or `npm run web`) serves `http://127.0.0.1:8787` by default
+and opens it in the default browser (`--no-open` skips that); `--port`,
+`--host` and `--token` adjust it. Scripting:
 `basicagent --json "prompt"` emits JSONL events (`assistant_delta`,
 `tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
 streams the same events plus `approval_result` and `aborted`; there the

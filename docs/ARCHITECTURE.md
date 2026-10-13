@@ -47,11 +47,12 @@ has no `dependencies`.
 | File | Responsibility |
 | --- | --- |
 | `bin/basicagent.mjs` | CLI entry point. Argument parsing, config loading, REPL, one-shot and `--json` modes, slash commands, Ctrl+C handling. All user-visible behavior lives here. |
-| `bin/basicagent-web.mjs` | Web entry point. Flag parsing, token generation, startup banner, signal handling. |
+| `bin/basicagent-web.mjs` | Web entry point. Flag parsing, token generation, startup banner, browser launch, signal handling. |
 | `src/web/server.mjs` | HTTP server: static files from `web/`, host/origin checks, bearer-token auth for `/api`, routing to the API. |
 | `src/web/api.mjs` | JSON endpoints: status, chat streaming, approvals, sessions, facts, audit, config read/write. |
 | `src/web/session.mjs` | `WebSession` (one Agent + Memory + registry per conversation) and `SessionManager`; the approval bridge to the browser; disk helpers for browsing sessions. |
 | `src/web/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
+| `src/web/open-browser.mjs` | Launches the token URL in the default browser (`xdg-open`/`open`/`start`); detached, failures are ignored. |
 | `web/` | The frontend: hand-written HTML/CSS/JS, no build step. `web/assets/css/tokens.css` and the Marcellus SC font are copied from henksys.com so the UI matches the site's look; sync them when the site changes. |
 | `src/config.mjs` | Built-in defaults, config file loading and merging (defaults <- file <- env <- flags), validation and path normalization. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |

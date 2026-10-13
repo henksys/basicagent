@@ -81,9 +81,10 @@ node bin/basicagent-web.mjs        # or: npm run web
 ```
 
 The server binds to `127.0.0.1:8787` by default and prints a URL with an
-access token in the fragment; open it to get the interface. The token is
-required for every `/api` request, so other local programs (and websites
-trying DNS rebinding) cannot drive the agent. `--port`, `--host` and
+access token in the fragment; it also opens that URL in your default browser
+automatically (use `--no-open` to skip, e.g. in scripts or over SSH). The
+token is required for every `/api` request, so other local programs (and
+websites trying DNS rebinding) cannot drive the agent. `--port`, `--host` and
 `--token` are available if you need them; a non-loopback `--host` drops the
 host/origin checks that only make sense for local use.
 
@@ -137,6 +138,7 @@ basicagent-web [options]
   --port <number>   port to listen on (default 8787)
   --host <address>  address to bind (default 127.0.0.1)
   --token <string>  fixed access token (default: random, printed at startup)
+  --no-open         do not open the interface in the default browser
   --config/--cwd/--data-dir/--model/--base-url/--api-key/--no-web
 ```
 
