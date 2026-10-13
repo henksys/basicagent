@@ -269,12 +269,18 @@
       case 'iteration':
         setComposerHint(`working… (iteration ${event.iteration})`);
         break;
-      case 'assistant_delta':
-        if (chat.assistantEl) {
-          chat.assistantEl.textContent += event.text;
-          scrollMessages();
+      case 'assistant_delta': {
+        // Keep the answer chronological: start a fresh bubble whenever the
+        // last one is no longer the newest element (tool/approval cards were
+        // appended after it), so the final answer stays below the approvals.
+        const messages = $('#messages');
+        if (!chat.assistantEl || messages.lastElementChild !== chat.assistantEl.parentElement) {
+          chat.assistantEl = addMessage('assistant', '');
         }
+        chat.assistantEl.textContent += event.text;
+        scrollMessages();
         break;
+      }
       case 'tool_start':
         addToolCard(event.name, event.args);
         break;
@@ -345,7 +351,6 @@
     chat.busy = true;
     updateBusyUI();
     addMessage('user', message);
-    chat.assistantEl = addMessage('assistant', '');
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
