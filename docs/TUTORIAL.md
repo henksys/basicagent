@@ -4,7 +4,7 @@ A five minute setup guide, then the features you will actually use.
 
 ## Requirements
 
-- **Node.js 24 or newer** (`node --version`). Nothing else: no npm install, no
+- **[Node.js 24 or newer](https://nodejs.org/en/about/previous-releases)** (`node --version`). Nothing else: no npm install, no
   dependencies, no build step.
 
 ## 1. Set it up

@@ -9,7 +9,7 @@ with the same zero-dependency promise: Node 24+ built-ins only.
 
 ## Requirements
 
-It only requires Node 24 or newer (declared in `package.json` engines).
+It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
 
 ## Example
 
