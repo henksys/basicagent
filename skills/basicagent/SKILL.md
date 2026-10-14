@@ -34,10 +34,13 @@ Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
 ## Configuration you can change
 
 - `provider`: `baseUrl` (e.g. `https://ollama.com/v1`), `model`, `apiKey` or
-  `apiKeyEnv` (name of an environment variable), `temperature`, `maxTokens`,
+  `apiKeyEnv` (name of an environment variable), `temperature`, `maxTokens`
+  (optional cap on one reply; unset means the provider's own default is used),
   `timeoutMs`, `toolChoice` (omit it for Ollama).
-- `agent`: `maxIterations`, `contextChars`, `maxResultChars`,
-  `systemPrompt` / `systemPromptFile` (use these to rename/re-persona yourself).
+- `agent`: `maxIterations`, `contextChars` (character budget for the stored
+  conversation before old history is trimmed — not the model's context window),
+  `maxResultChars`, `systemPrompt` / `systemPromptFile` (use these to
+  rename/re-persona yourself; the default persona is in `persona-example.md`).
 - `tools.files`: `roots` (`{path, access}` with `rw` / `ro` / `approval` /
   `deny`), `protectedPaths`, size caps.
 - `tools.shell`: `enabled` (default false), `approval` (`always` / `never`),
@@ -104,8 +107,8 @@ REPL: `basicagent`. One-shot: `basicagent "prompt"`. Web interface:
 `basicagent-web` (or `npm run web`) serves `http://127.0.0.1:8787` by default
 and opens it in the default browser (`--no-open` skips that); `--port`,
 `--host` and `--token` adjust it. Guided configuration: `basicagent-setup`
-(provider, model, key, max tokens, shell access, config/data dirs; tests the
-provider and can start the web interface). Scripting:
+(provider, model, key, shell access, config/data dirs; tests the provider and
+can start the web interface). Scripting:
 `basicagent --json "prompt"` emits JSONL events (`assistant_delta`,
 `tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
 streams the same events plus `approval_result` and `aborted`; there the
@@ -123,6 +126,6 @@ through `load_skill`. This bundled skill lives in the project's
 
 ## Tests
 
-`npm test` is offline (fake provider; 104 tests including the web server).
+`npm test` is offline (fake provider; 124 tests including the web server).
 `npm run test:live` is an opt-in Ollama Cloud integration test and needs
 `OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).

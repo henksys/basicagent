@@ -156,15 +156,6 @@ async function askYesNo(p, label, defaultValue) {
   }
 }
 
-async function askInteger(p, label, fallback) {
-  for (;;) {
-    const answer = await askValue(p, label, fallback);
-    const value = Number(answer);
-    if (Number.isInteger(value) && value > 0) return value;
-    process.stdout.write('Please enter a positive whole number.\n');
-  }
-}
-
 // Provider questions ----------------------------------------------------------
 
 function providerMenu() {
@@ -300,7 +291,6 @@ async function main() {
   // Provider block (repeated when a connection test fails and the user asks
   // to edit the settings).
   const answers = await askProvider(p, base.raw);
-  answers.maxTokens = await askInteger(p, 'Max tokens', getByPath(base.raw, 'provider.maxTokens') ?? DEFAULTS.provider.maxTokens);
   answers.shellEnabled = await askYesNo(
     p,
     'Enable the shell tool (run_command; every command still needs approval)',

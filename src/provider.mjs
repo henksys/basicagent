@@ -45,9 +45,9 @@ export class Provider {
       model: this.config.model,
       messages,
       stream: true,
-      temperature: this.config.temperature,
-      max_tokens: this.config.maxTokens
+      temperature: this.config.temperature
     };
+    if (this.config.maxTokens != null) body.max_tokens = this.config.maxTokens;
     if (tools?.length) {
       body.tools = tools;
       if (this.config.toolChoice) body.tool_choice = this.config.toolChoice;

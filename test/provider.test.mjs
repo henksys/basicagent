@@ -54,6 +54,20 @@ test('streams text and rebuilds a tool call split across chunks', async (t) => {
   assert.ok(server.requests[0].tools);
 });
 
+test('max_tokens is only sent when provider.maxTokens is set', async (t) => {
+  const server = await startFakeProvider([
+    [textChunk('ok'), finishChunk('stop')],
+    [textChunk('ok'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+
+  await providerFor(server, { maxTokens: 8192 }).chat({ messages: [{ role: 'user', content: 'hi' }], tools: [] });
+  assert.equal(server.requests[0].max_tokens, 8192);
+
+  await providerFor(server, { maxTokens: null }).chat({ messages: [{ role: 'user', content: 'hi' }], tools: [] });
+  assert.ok(!('max_tokens' in server.requests[1]), 'unset maxTokens omits max_tokens');
+});
+
 test('tool arguments arriving as an object are stringified', async (t) => {
   const server = await startFakeProvider([
     [

@@ -97,7 +97,11 @@ has no `dependencies`.
 - **Context trimming** (`agent.contextChars`): old tool results become a
   placeholder first, then whole old exchanges are dropped. Tool messages are
   removed together with the assistant message that requested them so the
-  provider never sees an orphaned `tool` message. The same serialized-size
+  provider never sees an orphaned `tool` message. The metric is a character
+  count of the stored messages only — the system prompt, skills and facts are
+  sent on top and not counted, and characters are not tokens — and it neither
+  reflects nor queries the provider's context window. `provider.maxTokens`
+  is a separate, optional per-request output cap. The same serialized-size
   metric (`contextSize`) is reported on every `iteration` event and drives the
   context gauge in the web interface.
 - **Abort**: Ctrl+C in the REPL (or SIGINT in one-shot) aborts the current
@@ -170,8 +174,9 @@ single-user local tool.
 `src/provider.mjs` speaks one dialect well and tolerates the known variations
 between servers:
 
-- request: `{ model, messages, stream: true, temperature, max_tokens }` plus
-  `tools`/`tool_choice` when tools exist. `tool_choice` is only sent when
+- request: `{ model, messages, stream: true, temperature }` plus `tools` when
+  tools exist and `max_tokens` only when `provider.maxTokens` is set (unset =
+  the provider's own default output limit). `tool_choice` is only sent when
   configured, because Ollama rejects it.
 - response: SSE `data:` lines, `[DONE]` terminator, `choices[0].delta`.
 - tolerated quirks: missing/repeated tool call ids, names split across deltas,

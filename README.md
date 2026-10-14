@@ -29,7 +29,7 @@ Done: added provider.timeoutMs handling and all tests pass.
   DeepSeek, OpenAI. Configure `baseUrl`, `model` and an API-key environment
   variable.
 - **Agent loop with limits** — iteration cap, repeated-failure circuit breaker,
-  context trimming, Ctrl+C abort.
+  context trimming, an optional output-token cap, Ctrl+C abort.
 - **File tools** — read, write, edit, append, list, rename, with a
   root-based access policy (`rw` / `ro` / `approval` / `deny`, most specific
   root wins), symlink-safe path checks and protected paths (config file and
@@ -50,9 +50,9 @@ Done: added provider.timeoutMs handling and all tests pass.
 - **Interactive and scriptable** — REPL for conversation, one-shot mode for
   automation, `--json` event stream for embedding.
 - **Guided setup** — `basicagent-setup` asks for the provider, model, API key,
-  max tokens, shell access and the config/data directories, tests the
-  connection and can start the web interface when done. Enter accepts the
-  defaults from `config.example.json` or your existing config.
+  shell access and the config/data directories, tests the connection and can
+  start the web interface when done. Enter accepts the defaults from
+  `config.example.json` or your existing config.
 - **Local web interface** — `basicagent-web` serves a browser UI on
   `127.0.0.1` (chat with live streaming and inline approvals, a settings
   editor for the config file, and browsable facts, sessions and the audit
@@ -100,7 +100,8 @@ The UI has three tabs:
 - **Chat** — sessions in the sidebar, streamed answers, tool calls with their
   arguments and results, and approve/deny buttons when a guarded action needs
   confirmation. Stop cancels the running turn; closing the tab aborts it. A
-  context gauge shows how full the agent's auto-trim budget is.
+  context gauge shows how full the agent's auto-trim budget
+  (`agent.contextChars`) is — not the model's context window.
 - **Settings** — edits the same `config.json` the CLI reads (provider, agent
   limits, file roots, shell, web tool, skills, memory). Saving validates the
   result, writes the file atomically and live-reloads the agent. The API key
@@ -114,6 +115,8 @@ The UI has three tabs:
   guardrails, troubleshooting.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized,
   the turn lifecycle, and how to add tools/providers/skills.
+- [persona-example.md](persona-example.md) — the default agent persona and how
+  to replace it.
 - [skills/basicagent/SKILL.md](skills/basicagent/SKILL.md) — the bundled
   self-help skill the agent loads when asked about itself.
 - `skills/example/SKILL.md` — skill template.

@@ -70,7 +70,6 @@ export function applyAnswers(base, answers) {
   raw.provider = { ...(raw.provider || {}) };
   raw.provider.baseUrl = String(answers.baseUrl).replace(/\/+$/, '');
   raw.provider.model = answers.model;
-  raw.provider.maxTokens = answers.maxTokens;
   for (const key of ['apiKey', 'apiKeyEnv']) {
     const value = answers[key];
     if (value === undefined) continue;
@@ -90,7 +89,7 @@ export async function testProvider(raw, { cwd = process.cwd(), configPath = '', 
   const merged = deepMerge(structuredClone(DEFAULTS), raw);
   const config = normalizeConfig(merged, { cwd, configPath, configFound: true });
   config.provider.timeoutMs = Math.min(config.provider.timeoutMs, timeoutMs);
-  config.provider.maxTokens = Math.min(config.provider.maxTokens, 16);
+  config.provider.maxTokens = 16;
   config.provider.temperature = 0;
   if (process.env.BASICAGENT_API_KEY) config.provider.apiKey = process.env.BASICAGENT_API_KEY;
   else if (!config.provider.apiKey && config.provider.apiKeyEnv) config.provider.apiKey = process.env[config.provider.apiKeyEnv] || '';
@@ -119,7 +118,7 @@ export function summaryLines(raw, { configPath }) {
     ['provider', provider.baseUrl],
     ['model', provider.model],
     ['api key', key],
-    ['max tokens', String(provider.maxTokens)],
+    ['max tokens', provider.maxTokens == null ? 'provider default' : String(provider.maxTokens)],
     ['shell tool', raw.tools?.shell?.enabled ? 'enabled (every command asks approval)' : 'disabled'],
     ['memory', raw.memory?.enabled === false ? 'disabled' : `enabled, ${raw.memory?.dir}`]
   ];

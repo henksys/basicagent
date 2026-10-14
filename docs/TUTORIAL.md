@@ -10,9 +10,9 @@ A five minute setup guide, then the features you will actually use.
 ## 1. Set it up
 
 The guided setup walks you through everything with a handful of questions
-(provider, model, API key, max tokens, shell access, config and data
-directories), writes the config file, tests the connection and then offers to
-start the web interface in your browser:
+(provider, model, API key, shell access, config and data directories), writes
+the config file, tests the connection and then offers to start the web
+interface in your browser:
 
 ```sh
 node bin/basicagent-setup.mjs     # or: npm run setup
@@ -129,6 +129,36 @@ to replace the default "You are basicagent, ..." paragraph:
 Only the persona paragraph is replaced; the environment, skills and safety
 sections are still appended. The bundled `basicagent` self-help skill also
 follows the configured persona while keeping the program's paths and tooling.
+The default paragraph is written out in `persona-example.md`; copy it if you
+want to tweak the wording instead of replacing it entirely.
+
+### Output cap vs. context budget
+
+`provider.maxTokens` and `agent.contextChars` both sound like limits, but they
+control different things:
+
+- `provider.maxTokens` is an optional cap on **one model answer**. When set it
+  is sent as `max_tokens` with the request; when it is unset the provider
+  applies its own default output limit (for example, DeepSeek defaults to 4096
+  with a maximum of 8192). The setup tool does not ask for it — set it in the
+  config file or the web Settings if you want a cap. Tool-call arguments count
+  as output, so a low cap can truncate a large `write_file` or `edit_file`, and
+  a value above what the provider allows may be rejected with an HTTP 400.
+- `agent.contextChars` (default `100000`) is the **conversation budget** before
+  basicagent trims old history. It counts the serialized characters of the
+  stored messages — not tokens — and is *not* the model's context window:
+  basicagent never asks the provider for that, it just drops old context when
+  the budget is full. Older tool results are replaced with
+  `[tool result trimmed to save context]` first, then the oldest exchanges are
+  dropped (the newest user message and answer are always kept).
+
+The system prompt, skills index and saved facts are sent on top and are not
+counted against `agent.contextChars`. The web interface shows this budget as a
+gauge in the composer, e.g. `context 20% (25k/100k chars)`; it turns red at
+90%, and at 100% old messages start being dropped. Changing `maxTokens` does
+**not** move the gauge — change `agent.contextChars` for that, and size it to
+your model's real context window (roughly 4 characters per token) minus some
+headroom.
 
 ## 4. Use the REPL
 
@@ -137,7 +167,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.4
+basicagent 1.3.5
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -186,7 +216,8 @@ too. The interface has three tabs:
   action asks. Stop cancels the running turn and closing the tab aborts it.
   It uses the same sessions as the CLI, so you can switch between the two. A
   small context gauge in the composer shows how full the auto-trim budget
-  (`agent.contextChars`) is.
+  (`agent.contextChars`) is — not the model's context window, and unrelated to
+  `provider.maxTokens`.
 - **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
   agent limits, file roots, shell, web tool, skills, memory). Saving validates
   the values, writes the file and live-reloads the running agent. The API key
@@ -367,6 +398,8 @@ or delete files directly if you prefer.
 | Fetched page looks empty or garbled | The page likely renders with JavaScript (unsupported) or served an unusual encoding. Try the raw API/URL instead. |
 | `Unsupported content type` when fetching | Only html, xhtml, xml, plain, markdown and JSON are accepted. |
 | Timeouts on slow models | Raise `provider.timeoutMs`. |
+| Answers or tool calls are truncated | The provider's default output cap is low (DeepSeek defaults to 4096). Set `provider.maxTokens` to the provider's maximum (DeepSeek 8192). |
+| `Provider HTTP 400` mentioning `max_tokens` | `provider.maxTokens` is above what the model allows. Lower it, or remove the setting to use the provider default. |
 
 ## 11. Tests
 

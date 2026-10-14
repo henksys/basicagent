@@ -44,7 +44,7 @@ test('matchingPreset finds presets and falls back to custom', () => {
 
 test('applyAnswers preserves the base and removes cleared keys', () => {
   const base = {
-    provider: { baseUrl: 'http://old/v1', model: 'old', apiKey: 'secret', apiKeyEnv: 'OLD_KEY' },
+    provider: { baseUrl: 'http://old/v1', model: 'old', apiKey: 'secret', apiKeyEnv: 'OLD_KEY', maxTokens: 8192 },
     tools: { files: { roots: [{ path: '/x', access: 'ro' }] }, shell: { enabled: false } },
     memory: { enabled: true, dir: '~/old' },
     custom: { keep: true }
@@ -52,7 +52,6 @@ test('applyAnswers preserves the base and removes cleared keys', () => {
   const raw = applyAnswers(base, {
     baseUrl: 'https://new.example/v1/',
     model: 'new-model',
-    maxTokens: 8192,
     apiKey: null,
     apiKeyEnv: 'NEW_KEY',
     shellEnabled: true,
@@ -74,8 +73,9 @@ test('applyAnswers preserves the base and removes cleared keys', () => {
 
 test('applyAnswers keeps keys that are left undefined', () => {
   const base = { provider: { baseUrl: 'http://old/v1', model: 'old', apiKey: 'secret' } };
-  const raw = applyAnswers(base, { baseUrl: 'http://new/v1', model: 'new', maxTokens: 4096, shellEnabled: false, memoryEnabled: true, dataDir: '~/d' });
+  const raw = applyAnswers(base, { baseUrl: 'http://new/v1', model: 'new', shellEnabled: false, memoryEnabled: true, dataDir: '~/d' });
   assert.equal(raw.provider.apiKey, 'secret');
+  assert.ok(!('maxTokens' in raw.provider), 'setup never adds a maxTokens cap');
 });
 
 test('loadBaseConfig prefers an existing config and falls back to the example', async (t) => {
@@ -116,13 +116,17 @@ test('summaryLines describe the provider, key source and memory', () => {
   assert.equal(asObject['api key'], 'environment variable DEEPSEEK_API_KEY');
   assert.equal(asObject['shell tool'], 'disabled');
   assert.equal(asObject.memory, 'enabled, ~/data');
+  assert.equal(asObject['max tokens'], '4096');
+
+  const noCap = Object.fromEntries(summaryLines({ provider: { baseUrl: 'http://x/v1', model: 'm' } }, { configPath: '/tmp/config.json' }));
+  assert.equal(noCap['max tokens'], 'provider default');
 });
 
 // End-to-end tests (piped stdin, no TTY) --------------------------------------
 
-test('Enter-only run writes the example defaults, including maxTokens 4096', async (t) => {
+test('Enter-only run writes the example defaults without a maxTokens cap', async (t) => {
   const { dir, configPath } = workspace(t);
-  const input = ['', '', '', '', '', '', '', '', 'n', ''].join('\n') + '\n';
+  const input = ['', '', '', '', '', '', '', 'n', ''].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);
@@ -131,7 +135,7 @@ test('Enter-only run writes the example defaults, including maxTokens 4096', asy
   assert.equal(raw.provider.baseUrl, 'http://localhost:11434/v1');
   assert.equal(raw.provider.model, 'qwen3:8b');
   assert.equal(raw.provider.apiKeyEnv, 'BASICAGENT_API_KEY');
-  assert.equal(raw.provider.maxTokens, 4096);
+  assert.ok(!('maxTokens' in raw.provider), 'no output cap is written; the provider default applies');
   assert.equal(raw.tools.shell.enabled, false);
   assert.equal(raw.memory.enabled, true);
   assert.equal(raw.memory.dir, '~/.local/share/basicagent');
@@ -142,7 +146,7 @@ test('Enter-only run writes the example defaults, including maxTokens 4096', asy
 test('preset answers, inline key, shell and custom paths are written', async (t) => {
   const { dir, configPath } = workspace(t);
   const dataDir = join(dir, 'agent-data');
-  const input = ['2', '', '', '', 'sk-test-123', '8192', 'y', '', dataDir, '', 'n', ''].join('\n') + '\n';
+  const input = ['2', '', '', '', 'sk-test-123', 'y', '', dataDir, '', 'n', ''].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);
@@ -152,7 +156,7 @@ test('preset answers, inline key, shell and custom paths are written', async (t)
   assert.equal(raw.provider.model, 'gemma4:31b');
   assert.equal(raw.provider.apiKeyEnv, 'OLLAMA_API_KEY_CLOUD');
   assert.equal(raw.provider.apiKey, 'sk-test-123');
-  assert.equal(raw.provider.maxTokens, 8192);
+  assert.ok(!('maxTokens' in raw.provider), 'setup adds no maxTokens cap');
   assert.equal(raw.tools.shell.enabled, true);
   assert.equal(raw.memory.dir, dataDir);
 });
@@ -160,11 +164,11 @@ test('preset answers, inline key, shell and custom paths are written', async (t)
 test('an existing config keeps its values and unrelated settings', async (t) => {
   const { dir, configPath } = workspace(t);
   writeFileSync(configPath, JSON.stringify({
-    provider: { baseUrl: 'http://localhost:9999/v1', model: 'my-model', apiKey: 'sekret', apiKeyEnv: 'MY_KEY' },
+    provider: { baseUrl: 'http://localhost:9999/v1', model: 'my-model', apiKey: 'sekret', apiKeyEnv: 'MY_KEY', maxTokens: 8192 },
     tools: { files: { roots: [{ path: '/somewhere', access: 'ro' }] }, shell: { enabled: true } },
     custom: { keep: true }
   }));
-  const input = ['', '', '', '', '', '', '', '', join(dir, 'data'), '', ''].join('\n') + '\n';
+  const input = ['', '', '', '', '', '', '', join(dir, 'data'), '', ''].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start', '--no-test'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);
@@ -174,7 +178,7 @@ test('an existing config keeps its values and unrelated settings', async (t) => 
   assert.equal(raw.provider.model, 'my-model');
   assert.equal(raw.provider.apiKey, 'sekret', 'stored key is kept on Enter');
   assert.equal(raw.provider.apiKeyEnv, 'MY_KEY');
-  assert.equal(raw.provider.maxTokens, 4096, 'missing value falls back to the default');
+  assert.equal(raw.provider.maxTokens, 8192, 'an existing cap is preserved');
   assert.deepEqual(raw.tools.files.roots, [{ path: '/somewhere', access: 'ro' }]);
   assert.equal(raw.tools.shell.enabled, true);
   assert.deepEqual(raw.custom, { keep: true });
@@ -184,7 +188,7 @@ test('the provider test runs against the configured provider', async (t) => {
   const provider = await startFakeProvider([[textChunk('ready'), finishChunk('stop')]]);
   t.after(() => provider.close());
   const { dir, configPath } = workspace(t);
-  const input = ['6', provider.baseUrl, 'fake-model', '', '', '', '', '', join(dir, 'data'), '', '', ''].join('\n') + '\n';
+  const input = ['6', provider.baseUrl, 'fake-model', '', '', '', '', join(dir, 'data'), '', '', ''].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);
@@ -197,7 +201,7 @@ test('the provider test runs against the configured provider', async (t) => {
 
 test('a failed provider test can be skipped and the config is still written', async (t) => {
   const { dir, configPath } = workspace(t);
-  const input = ['6', 'http://127.0.0.1:9/v1', 'nope-model', '', '', '', '', '', join(dir, 'data'), '', '', 'n', ''].join('\n') + '\n';
+  const input = ['6', 'http://127.0.0.1:9/v1', 'nope-model', '', '', '', '', join(dir, 'data'), '', '', 'n', ''].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);
@@ -208,7 +212,7 @@ test('a failed provider test can be skipped and the config is still written', as
 
 test('declining the write leaves no file and starts nothing', async (t) => {
   const { dir, configPath } = workspace(t);
-  const input = ['', '', '', '', '', '', '', '', 'n', 'n'].join('\n') + '\n';
+  const input = ['', '', '', '', '', '', '', 'n', 'n'].join('\n') + '\n';
   const result = await runSetup(['--config', configPath, '--no-start'], { cwd: dir, input });
 
   assert.equal(result.code, 0, result.stderr);

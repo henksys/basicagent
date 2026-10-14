@@ -38,7 +38,9 @@ export const DEFAULTS = Object.freeze({
     apiKeyEnv: 'BASICAGENT_API_KEY',
     model: 'qwen3:8b',
     temperature: 0.2,
-    maxTokens: 4096,
+    // Optional cap on one reply. null omits max_tokens from the request, so
+    // the provider applies its own default output limit.
+    maxTokens: null,
     timeoutMs: 120000,
     // Ollama does not support tool_choice, so it stays null (omitted) by
     // default. Set to "auto", "required" or "none" for providers that do.
@@ -145,7 +147,7 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (typeof provider.baseUrl !== 'string' || !provider.baseUrl.trim()) throw new Error('provider.baseUrl must be a non-empty string');
   if (typeof provider.model !== 'string' || !provider.model.trim()) throw new Error('provider.model must be a non-empty string');
   if (!Number.isFinite(provider.temperature) || provider.temperature < 0 || provider.temperature > 2) throw new Error('provider.temperature must be a number between 0 and 2');
-  if (!Number.isInteger(provider.maxTokens) || provider.maxTokens <= 0) throw new Error('provider.maxTokens must be a positive integer');
+  if (provider.maxTokens !== null && (!Number.isInteger(provider.maxTokens) || provider.maxTokens <= 0)) throw new Error('provider.maxTokens must be null or a positive integer');
   if (!Number.isInteger(provider.timeoutMs) || provider.timeoutMs <= 0) throw new Error('provider.timeoutMs must be a positive integer');
   if (provider.toolChoice !== null && !['auto', 'required', 'none'].includes(provider.toolChoice)) throw new Error('provider.toolChoice must be null, "auto", "required" or "none"');
   if (provider.apiKeyEnv !== null && provider.apiKeyEnv !== undefined && typeof provider.apiKeyEnv !== 'string') throw new Error('provider.apiKeyEnv must be a string');

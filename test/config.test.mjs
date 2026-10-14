@@ -16,6 +16,7 @@ test('defaults load when no config file exists', () => {
   try {
     const config = loadConfig({ env: { HOME: dir, XDG_CONFIG_HOME: join(dir, '.config') }, cwd: dir });
     assert.equal(config.provider.baseUrl, 'http://localhost:11434/v1');
+    assert.equal(config.provider.maxTokens, null, 'no output cap by default');
     assert.equal(config.tools.files.roots.length, 1);
     assert.equal(config.tools.files.roots[0].path, dir);
     assert.equal(config.paths.configFound, false);
@@ -90,6 +91,8 @@ test('invalid values are rejected with clear errors', () => {
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /access/);
     writeFileSync(configPath, JSON.stringify({ agent: { maxIterations: 0 } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /maxIterations/);
+    writeFileSync(configPath, JSON.stringify({ provider: { maxTokens: 0 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /maxTokens/);
     writeFileSync(configPath, 'not json');
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /not valid JSON/);
   } finally {
