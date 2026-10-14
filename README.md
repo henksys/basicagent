@@ -4,12 +4,12 @@ A small, dependency-free transparant (not a blackbox) command line agent. It run
 model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
 file tools, shell access, SKILL.md skills and persistent memory.
 
-Use it for scripted tasks, as a command line assistant, or through the web interface. Its tool-calling scope is deliberately small, which keeps it fast,transparent and safe. As a personal assistant it is basic by design, but you can teach/allow it your machine's tools ( let it read man pages or search the web, or ask it to write a skill for something like pandoc, and after that it can perform the tasks with that program by using the skill it wrote).
+It can be used for scripted tasks, as a command line assistant, or through the web interface. Its tool-calling scope is deliberately small, which keeps it fast,transparent and safe. As a personal assistant it is basic by design, but one can teach/allow it to use the available machine's tools ( let it read man pages or search the web, or ask it to write skills for something like pandoc or pdftotext or any other command-line program, and after that it can perform the tasks with those programs by using the skills it wrote).
 
-So basically it grows more capable while using it. It can assist you for example with your systemd configuration/information and logs  and other settings, or write code/scripts.
+So basically it grows more capable while using it. It can assist with for example systemd configuration/information and logs  and other settings, or write code/scripts.
 
 It also ships a local web interface (chat, settings, memory and audit log)
-with the same zero-dependency promise: Node 24+ built-ins only.
+Zero-dependency: Node 24+ built-ins only.
 
 ## Requirements
 
