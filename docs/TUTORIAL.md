@@ -167,7 +167,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.5
+basicagent 1.3.6
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -380,6 +380,11 @@ Ask the agent to "remember that I prefer tabs" and it stores a fact; ask it to
 "forget my tab preference" and it removes matching records. Resuming replays
 only user/assistant text, not tool traffic. Everything is plain JSONL — grep
 or delete files directly if you prefer.
+
+Facts are also a lightweight way to rename the agent or teach it your name:
+save `agent_name` / `user_name` (for example in the web interface's Memory
+tab) and they appear in the system prompt of every run — see
+`persona-example.md`.
 
 ## 10. Troubleshooting
 
