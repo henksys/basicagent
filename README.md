@@ -1,6 +1,6 @@
 # basicagent
 
-A small, dependency-free command line agent. It runs an OpenAI-compatible
+A small, dependency-free transparant (not a blackbox) command line agent. It runs an OpenAI-compatible
 model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with
 file tools, shell access, SKILL.md skills and persistent memory.
 
