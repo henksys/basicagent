@@ -44,7 +44,7 @@ Done: added provider.timeoutMs handling and all tests pass.
   addresses), domain allow/deny lists, bounded HTML-to-text extraction, and no
   cookies or JS. Disable it with `tools.web.enabled: false` or `--no-web`.
 - **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
-  format used by Omarchy/Claude-style skill directories. Ships a bundled
+  format used by Claude-style skill directories. Ships a bundled
   [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
   agent's own configuration, memory, guardrails and extension process.
 - **Persistent memory** — facts and conversation text in plain JSONL under
