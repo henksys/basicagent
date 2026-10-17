@@ -178,8 +178,6 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
 
-Copyright (C) 2026 Henk Duisterwinkel
-
 basicagent is an independent, from-scratch implementation. All code in this
 repository was written for this project; its design follows patterns common to
 tool-using agents, such as skill files, schema-validated tool registries and
