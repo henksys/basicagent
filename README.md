@@ -11,6 +11,13 @@ So basically it grows more capable while using it. It can assist with for exampl
 It also ships a local web interface (chat, settings, memory and audit log)
 Zero-dependency: Node 24+ built-ins only.
 
+
+
+## TTS and STT with the SkyAgent plugin
+
+Basicagent can now also be used with the Omarchy [SkyAgent](https://github.com/henksys/omarchy-skyagent) plugin.
+
+
 ## Requirements
 
 It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
