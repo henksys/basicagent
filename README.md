@@ -2,7 +2,9 @@
 
 A small, dependency-free transparant (not a blackbox) command line agent. It runs an OpenAI-compatible model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with file tools, shell access, SKILL.md skills and persistent memory.
 
-It can be used for scripted tasks, as a command line assistant, or through the web interface. Its tool-calling scope is deliberately small, which keeps it fast,transparent and safe. Can be used to study the basics, it has good documentation, and it can be easily expanded.
+It can be used for scripted tasks, as a command line assistant, through the web interface, or even via voice with TTS/STT. However, voice-chatting is not included in this project and requires [SkyAgent](https://github.com/henksys/omarchy-skyagent), which is a separate plugin for Basicagent.
+
+Its tool-calling scope is deliberately small, which keeps it fast, transparent and safe. Can be used to study the basics, it has good documentation, and it can be easily expanded.
 
 As a personal assistant it is basic by design, but one can teach/allow it to use the available machine's tools ( let it learn the programs by reading man pages or searching the web, and then ask it to write skills for something like pandoc or pdftotext or any other command-line program, and after that it can perform the tasks with those programs by using the skills it wrote).
 
@@ -12,10 +14,6 @@ It also ships a local web interface (chat, settings, memory and audit log)
 Zero-dependency: Node 24+ built-ins only.
 
 
-
-## TTS and STT with the SkyAgent plugin
-
-Basicagent can now also be used with the Omarchy [SkyAgent](https://github.com/henksys/omarchy-skyagent) plugin.
 
 
 ## Requirements
