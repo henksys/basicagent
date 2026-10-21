@@ -167,7 +167,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.7
+basicagent 1.3.8
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -196,7 +196,7 @@ Commands:
 
 Ctrl+C cancels the running turn, not the program. In a terminal the
 `basicagent` part of the prompt is cyan, matching tool-call labels;
-`NO_COLOR=1` disables color.
+`--no-color` or `NO_COLOR=1` disables color.
 
 ## 5. Use the web interface
 

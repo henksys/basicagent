@@ -8,19 +8,20 @@
 //   json   every event as one JSON object per line on stdout, suitable for
 //          scripts; human errors still go to stderr
 //
-// Colors are used only when stderr is a TTY and NO_COLOR is not set.
-// The REPL prompt uses the same cyan as tool activity, but decides based on
-// the stream the prompt is written to so redirected output stays clean.
+// Colors are used only when stderr is a TTY, NO_COLOR is not set, and the
+// caller did not pass color: false (--no-color). The REPL prompt uses the
+// same cyan as tool activity, but decides based on the stream the prompt is
+// written to so redirected output stays clean.
 
 import { previewJSON } from './util.mjs';
 
-export function promptLabel(label, { stream = process.stdout, env = process.env } = {}) {
-  const useColor = Boolean(stream.isTTY) && !env.NO_COLOR;
+export function promptLabel(label, { stream = process.stdout, env = process.env, color = true } = {}) {
+  const useColor = Boolean(color) && Boolean(stream.isTTY) && !env.NO_COLOR;
   return useColor ? `\u001b[36m${label}\u001b[0m` : label;
 }
 
-export function createUI({ json = false, stdout = process.stdout, stderr = process.stderr } = {}) {
-  const useColor = Boolean(stderr.isTTY) && !process.env.NO_COLOR;
+export function createUI({ json = false, stdout = process.stdout, stderr = process.stderr, color = true } = {}) {
+  const useColor = Boolean(color) && Boolean(stderr.isTTY) && !process.env.NO_COLOR;
   const paint = (code, text) => (useColor ? `\u001b[${code}m${text}\u001b[0m` : text);
 
   return {

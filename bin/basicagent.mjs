@@ -50,6 +50,7 @@ Options:
   --session <id>     Use (or create) a named conversation session
   --ephemeral        Disable memory for this run
   --no-web           Disable the fetch_url web tool for this run
+  --no-color         Disable ANSI colors in terminal output
   --json             One-shot JSON-lines event output (for scripts)
   --yes              Auto-approve guarded actions without asking (dangerous,
                      in both REPL and one-shot mode)
@@ -81,6 +82,7 @@ function parseFlags(argv) {
       yes: { type: 'boolean' },
       ephemeral: { type: 'boolean' },
       'no-web': { type: 'boolean' },
+      'no-color': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' }
     }
@@ -136,7 +138,7 @@ async function main() {
     process.exit(2);
   }
 
-  const ui = createUI({ json: values.json });
+  const ui = createUI({ json: values.json, color: !values['no-color'] });
   const memory = config.memory.enabled && !values.ephemeral ? new Memory({ dir: config.memory.dir }) : null;
 
   // Conversation history: new session by default, or resume with --continue.
@@ -258,7 +260,7 @@ async function main() {
     input: process.stdin,
     output: promptOutput,
     terminal: true,
-    prompt: `${promptLabel('basicagent', { stream: promptOutput })}> `
+    prompt: `${promptLabel('basicagent', { stream: promptOutput, color: !values['no-color'] })}> `
   });
 
   ui.banner(`basicagent ${VERSION}`);

@@ -147,6 +147,7 @@ basicagent [options] [prompt]
   --ephemeral       disable memory for this run
   --no-web          disable the fetch_url web tool for this run
   --json            JSON-lines event output (for scripts)
+  --no-color        disable ANSI colors in terminal output
   --yes             auto-approve guarded actions without asking (dangerous)
 ```
 

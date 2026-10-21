@@ -113,9 +113,9 @@ can start the web interface). Scripting:
 `tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
 streams the same events plus `approval_result` and `aborted`; there the
 `approval` event carries an `id` answered with `POST /api/approvals/:id`.
-Handy flags: `--no-web` (disable web fetch for one run), `--continue`,
-`--session <id>`, `--ephemeral`. REPL commands: `/help /new /reload /skills
-/tools /model [name] /config /quit`.
+Handy flags: `--no-web` (disable web fetch for one run), `--no-color`
+(disable ANSI colors), `--continue`, `--session <id>`, `--ephemeral`. REPL
+commands: `/help /new /reload /skills /tools /model [name] /config /quit`.
 
 ## Skills
 
@@ -126,6 +126,6 @@ through `load_skill`. This bundled skill lives in the project's
 
 ## Tests
 
-`npm test` is offline (fake provider; 127 tests including the web server).
+`npm test` is offline (fake provider; 128 tests including the web server).
 `npm run test:live` is an opt-in Ollama Cloud integration test and needs
 `OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).

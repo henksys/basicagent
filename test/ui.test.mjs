@@ -27,3 +27,10 @@ test('promptLabel respects NO_COLOR', () => {
     'basicagent'
   );
 });
+
+test('promptLabel can be forced plain with color: false', () => {
+  assert.equal(
+    promptLabel('basicagent', { stream: { isTTY: true }, env: {}, color: false }),
+    'basicagent'
+  );
+});
