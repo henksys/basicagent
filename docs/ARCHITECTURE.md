@@ -359,7 +359,7 @@ defaults, config file, environment (`BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`,
 
 ## Testing
 
-- `npm test` — 104 offline tests: config merging, SSE parsing, the agent loop,
+- `npm test` — 127 offline tests: config merging, SSE parsing, the agent loop,
   the path policy, skills, memory, the web server (auth, streaming, approvals,
   config save) and the CLI end to end against a fake in-process provider.
 - `npm run test:live` — opt-in integration test against Ollama Cloud

@@ -9,8 +9,15 @@
 //          scripts; human errors still go to stderr
 //
 // Colors are used only when stderr is a TTY and NO_COLOR is not set.
+// The REPL prompt uses the same cyan as tool activity, but decides based on
+// the stream the prompt is written to so redirected output stays clean.
 
 import { previewJSON } from './util.mjs';
+
+export function promptLabel(label, { stream = process.stdout, env = process.env } = {}) {
+  const useColor = Boolean(stream.isTTY) && !env.NO_COLOR;
+  return useColor ? `\u001b[36m${label}\u001b[0m` : label;
+}
 
 export function createUI({ json = false, stdout = process.stdout, stderr = process.stderr } = {}) {
   const useColor = Boolean(stderr.isTTY) && !process.env.NO_COLOR;

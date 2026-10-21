@@ -26,7 +26,7 @@ import { createRegistry } from '../src/tools/index.mjs';
 import { Memory } from '../src/memory.mjs';
 import { discoverSkills } from '../src/skills.mjs';
 import { buildSystemPrompt } from '../src/prompt.mjs';
-import { createUI } from '../src/ui.mjs';
+import { createUI, promptLabel } from '../src/ui.mjs';
 import { createApproval } from '../src/approval.mjs';
 import { mask } from '../src/util.mjs';
 
@@ -253,11 +253,12 @@ async function main() {
 
   // Interactive REPL ---------------------------------------------------------
   refreshSystemPrompt();
+  const promptOutput = values.json ? process.stderr : process.stdout;
   rl = createInterface({
     input: process.stdin,
-    output: values.json ? process.stderr : process.stdout,
+    output: promptOutput,
     terminal: true,
-    prompt: 'basicagent> '
+    prompt: `${promptLabel('basicagent', { stream: promptOutput })}> `
   });
 
   ui.banner(`basicagent ${VERSION}`);

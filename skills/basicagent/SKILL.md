@@ -126,6 +126,6 @@ through `load_skill`. This bundled skill lives in the project's
 
 ## Tests
 
-`npm test` is offline (fake provider; 124 tests including the web server).
+`npm test` is offline (fake provider; 127 tests including the web server).
 `npm run test:live` is an opt-in Ollama Cloud integration test and needs
 `OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).

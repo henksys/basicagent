@@ -167,7 +167,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.6
+basicagent 1.3.7
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -194,7 +194,9 @@ Commands:
 | `/config` | Show the resolved config with the API key masked |
 | `/quit` | Exit (Ctrl+D works too) |
 
-Ctrl+C cancels the running turn, not the program.
+Ctrl+C cancels the running turn, not the program. In a terminal the
+`basicagent` part of the prompt is cyan, matching tool-call labels;
+`NO_COLOR=1` disables color.
 
 ## 5. Use the web interface
 
