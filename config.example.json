@@ -11,7 +11,9 @@
   },
   "agent": {
     "maxIterations": 25,
-    "contextChars": 100000,
+    "contextTokens": 24000,
+    "compact": "summarize",
+    "compactAt": 0.8,
     "maxResultChars": 24000,
     "systemPrompt": "",
     "systemPromptFile": ""

@@ -285,8 +285,15 @@ async function main() {
   process.stdout.write(`basicagent setup ${VERSION}\n\n`);
   process.stdout.write('This writes the basicagent configuration file. Press Enter to accept the\n');
   process.stdout.write('[default] shown for each question.\n\n');
-  if (base.found) process.stdout.write(`Found an existing config at ${base.source}; its values are the defaults.\n\n`);
-  else process.stdout.write(`No config found; the defaults come from ${base.source}.\n\n`);
+  if (base.found) process.stdout.write(`Found an existing config at ${base.source}; its values are the defaults.\n`);
+  else process.stdout.write(`No config found; the defaults come from ${base.source}.\n`);
+  if (base.migration?.to != null) {
+    process.stdout.write(`Migrating agent.contextChars=${base.migration.from} to agent.contextTokens=${base.migration.to}.\n\n`);
+  } else if (base.migration) {
+    process.stdout.write(`Ignoring invalid agent.contextChars=${base.migration.from}; using the default token budget.\n\n`);
+  } else {
+    process.stdout.write('\n');
+  }
 
   // Provider block (repeated when a connection test fails and the user asks
   // to edit the settings).

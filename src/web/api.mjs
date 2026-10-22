@@ -25,8 +25,9 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { contextSize } from '../agent.mjs';
+import { estimatePromptTokens } from '../context.mjs';
 import { loadConfig } from '../config.mjs';
+import { buildSystemPrompt } from '../prompt.mjs';
 import { discoverSkills } from '../skills.mjs';
 import { createRegistry } from '../tools/index.mjs';
 import { mask } from '../util.mjs';
@@ -130,7 +131,9 @@ export function createApi({ state, manager, version }) {
       model: config.provider.model,
       baseUrl: config.provider.baseUrl,
       cwd: state.cwd,
-      contextChars: config.agent.contextChars,
+      contextTokens: config.agent.contextTokens,
+      compact: config.agent.compact,
+      compactAt: config.agent.compactAt,
       memoryEnabled: config.memory.enabled,
       dataDir: dir,
       configPath: config.paths.configPath,
@@ -229,7 +232,7 @@ export function createApi({ state, manager, version }) {
     sendJSON(res, 200, {
       id: session.sessionId,
       messages: dir ? readSessionEvents(dir, session.sessionId) : [],
-      contextSize: session.contextSize()
+      contextTokens: session.contextTokens()
     });
   }
 
@@ -243,14 +246,43 @@ export function createApi({ state, manager, version }) {
     } catch {
       return badRequest(res, 'Invalid session id');
     }
-    // A live session knows its exact message array (including tool traffic);
-    // for a stored transcript, the agent would load exactly these user and
-    // assistant objects when the session becomes live.
+    // A live session knows its exact message array (including tool traffic).
+    // For a stored transcript, rebuild the same fixed prompt the agent will
+    // use (system prompt + tool schemas + summary) so the gauge is comparable
+    // before the session becomes live.
     const live = manager.sessions.get(id);
-    const size = live
-      ? live.contextSize()
-      : contextSize(messages.map(({ role, content }) => ({ role, content })));
-    sendJSON(res, 200, { id, messages, contextSize: size });
+    let contextTokens;
+    if (live) {
+      contextTokens = live.contextTokens();
+    } else {
+      // The transcript above shows the full history (including the marker),
+      // but the prompt a resumed agent would send is the newest summary plus
+      // the messages that survived it.
+      const summary = manager.factStore ? manager.factStore.readSummary(id) : '';
+      const plain = manager.factStore
+        ? manager.factStore.readSession(id)
+        : messages.filter((message) => message.role === 'user' || message.role === 'assistant');
+      const skills = discoverSkills(state.config.skills.paths);
+      const system = buildSystemPrompt({
+        config: state.config,
+        skills,
+        memory: manager.factStore,
+        cwd: state.cwd
+      });
+      const registry = createRegistry({
+        config: state.config,
+        memory: manager.factStore,
+        skills,
+        cwd: state.cwd
+      });
+      contextTokens = estimatePromptTokens({
+        system,
+        summary,
+        tools: registry.schemas(),
+        messages: plain
+      });
+    }
+    sendJSON(res, 200, { id, messages, contextTokens });
   }
 
   function sessionDelete(res, path) {

@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { Agent, contextSize } from '../agent.mjs';
+import { Agent } from '../agent.mjs';
 import { Memory, newSessionId, sanitizeSessionId } from '../memory.mjs';
 import { buildSystemPrompt } from '../prompt.mjs';
 import { Provider } from '../provider.mjs';
@@ -39,6 +39,7 @@ export class WebSession {
     this.#createMemory(sessionId);
     this.#build();
     this.agent.messages = this.memory ? this.memory.readSession(this.sessionId) : [];
+    this.agent.summary = this.memory ? this.memory.readSummary(this.sessionId) : '';
   }
 
   #createMemory(sessionId) {
@@ -67,6 +68,9 @@ export class WebSession {
 
   // Event fan-out to the active chat stream(s).
   emit(event) {
+    // Persist compaction before fan-out: the summary must survive a reload
+    // even if the browser stream is already gone.
+    if (event.type === 'compaction') this.memory?.appendSummary(event, this.agent.messages);
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -150,20 +154,22 @@ export class WebSession {
   reload(config) {
     this.config = config;
     const messages = this.agent.messages;
+    const summary = this.agent.summary;
     const sessionId = this.sessionId;
     this.#createMemory(sessionId);
     this.#build();
     this.agent.messages = messages;
+    this.agent.summary = summary;
   }
 
   info() {
     return { id: this.sessionId, busy: this.busy, messages: this.agent.messages.length };
   }
 
-  // Serialized size of the live conversation; the same metric trimHistory
-  // uses (agent.contextChars), shown as the context gauge in the web UI.
-  contextSize() {
-    return contextSize(this.agent.messages);
+  // Size of the prompt the agent would send now, in tokens. This is the same
+  // number the gauge shows and the compaction threshold uses.
+  contextTokens() {
+    return this.agent.contextTokens();
   }
 }
 
@@ -262,7 +268,9 @@ export function listSessions(dir) {
   return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
-// One session's messages including timestamps, for transcript display.
+// One session's events including timestamps, for transcript display.
+// Compaction records are included as `kind: "compaction"` markers so the web
+// interface can show where older turns were summarized.
 export function readSessionEvents(dir, id) {
   const path = join(dir, 'sessions', `${sanitizeSessionId(id)}.jsonl`);
   if (!existsSync(path)) return [];
@@ -271,7 +279,18 @@ export function readSessionEvents(dir, id) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry.role === 'user' || entry.role === 'assistant') {
+      if (entry.kind === 'summary') {
+        out.push({
+          ts: entry.ts || '',
+          kind: 'compaction',
+          role: 'system',
+          content: 'Earlier conversation summarized',
+          summary: String(entry.summary ?? ''),
+          messagesSummarized: entry.messagesSummarized ?? 0,
+          tokensBefore: entry.tokensBefore ?? null,
+          tokensAfter: entry.tokensAfter ?? null
+        });
+      } else if (entry.role === 'user' || entry.role === 'assistant') {
         out.push({ ts: entry.ts || '', role: entry.role, content: String(entry.content ?? '') });
       }
     } catch {

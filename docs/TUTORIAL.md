@@ -132,33 +132,97 @@ follows the configured persona while keeping the program's paths and tooling.
 The default paragraph is written out in `persona-example.md`; copy it if you
 want to tweak the wording instead of replacing it entirely.
 
-### Output cap vs. context budget
+### Output cap, context budget, and the model's context window
 
-`provider.maxTokens` and `agent.contextChars` both sound like limits, but they
-control different things:
+Three limits are easy to confuse:
 
 - `provider.maxTokens` is an optional cap on **one model answer**. When set it
   is sent as `max_tokens` with the request; when it is unset the provider
   applies its own default output limit (for example, DeepSeek defaults to 4096
-  with a maximum of 8192). The setup tool does not ask for it — set it in the
-  config file or the web Settings if you want a cap. Tool-call arguments count
-  as output, so a low cap can truncate a large `write_file` or `edit_file`, and
-  a value above what the provider allows may be rejected with an HTTP 400.
-- `agent.contextChars` (default `100000`) is the **conversation budget** before
-  basicagent trims old history. It counts the serialized characters of the
-  stored messages — not tokens — and is *not* the model's context window:
-  basicagent never asks the provider for that, it just drops old context when
-  the budget is full. Older tool results are replaced with
-  `[tool result trimmed to save context]` first, then the oldest exchanges are
-  dropped (the newest user message and answer are always kept).
+  with a maximum of 8192). Tool-call arguments count as output, so a low cap
+  can truncate a large `write_file` or `edit_file`, and a value above what the
+  provider allows may be rejected with an HTTP 400.
+- `agent.contextTokens` (default `24000`) is the budget for the **whole
+  prompt** basicagent is willing to send.
+- The model's **context window** is the provider's hard ceiling: 8k, 32k,
+  128k or 256k tokens depending on the model and how the server is configured.
 
-The system prompt, skills index and saved facts are sent on top and are not
-counted against `agent.contextChars`. The web interface shows this budget as a
-gauge in the composer, e.g. `context 20% (25k/100k chars)`; it turns red at
-90%, and at 100% old messages start being dropped. Changing `maxTokens` does
-**not** move the gauge — change `agent.contextChars` for that, and size it to
-your model's real context window (roughly 4 characters per token) minus some
-headroom.
+#### What the budget counts
+
+The budget covers everything in the request: the system prompt and persona,
+the skills index, saved facts, tool definitions, the conversation summary and
+the messages. With the default tools and memory enabled that fixed part is
+about **1,900 tokens** before the first message (roughly 600 for the system
+prompt and 1,300 for the tool schemas), so the Web UI gauge starts around 8% of
+a 24k budget. That is the real prompt size, not an overhead bug. Saved facts
+can add up to ~1,000 tokens and each compaction summary is counted too.
+
+#### Why the budget is smaller than the window
+
+Setting `contextTokens` to the model's maximum is usually a bad idea:
+
+- every request resends the whole prompt, so input cost and time-to-first-token
+  grow with it;
+- long histories dilute the model's attention and make tool selection worse;
+- you still need room for the answer and for tool-call arguments;
+- Ollama's `num_ctx` setting can be lower than the model card, so the window
+  you think you have may not be the one the server serves.
+
+A 256k window does **not** mean 256k tokens of useful history. Practical
+starting points:
+
+| Model window | Suggested `contextTokens` |
+| --- | --- |
+| 8k | 6k |
+| 32k | 16k–24k |
+| 128k | 32k |
+| 256k | 32k–64k |
+
+The default `24000` assumes the server actually serves at least a ~32k window.
+If you run an 8k local model, lower `contextTokens` to `6000`; otherwise the
+provider will truncate the request or reject it.
+
+#### What happens when the budget fills
+
+At `agent.compactAt` (default `0.8`, i.e. 80% of the budget) basicagent
+summarizes the oldest part of the conversation:
+
+- the most recent turns stay verbatim (about a quarter of the budget, capped at
+  8k tokens);
+- the older turns are replaced by a plain-text summary, which is sent as part
+  of the system prompt and stored in the session file;
+- a compaction notice appears in the CLI (`[context] summarized …`) and in the
+  Web UI transcript, where the summary can be expanded;
+- if the summary call fails, basicagent falls back to the old behavior:
+  replace old tool results with `[tool result trimmed to save context]`, then
+  drop the oldest exchanges. A failed summary never breaks a turn.
+
+Set `agent.compact: "off"` to skip summarization and always use that trimming
+fallback. The REPL has `/context` to show the current size and `/compact` to
+summarize now. `agent.maxResultChars` is a separate cap on one tool result;
+it stops a single command or download from consuming the whole budget.
+
+#### Where the number comes from
+
+With `provider.includeUsage: true` the provider reports exact
+`prompt_tokens`, which already includes the system prompt, tools, summary and
+messages. Without it, basicagent estimates from UTF-8 bytes (roughly four
+bytes per English token) and marks notice numbers with `~`. Not every
+OpenAI-compatible server accepts `stream_options`, which is why usage is
+opt-in; enable it if you want exact numbers.
+
+#### Upgrading from `contextChars`
+
+Before 1.4.0 the budget was `agent.contextChars` (default `100000`). It has
+been replaced by `agent.contextTokens` because characters are not tokens and
+the old number counted only the stored messages, ignoring the system prompt,
+skills, facts and tool definitions.
+
+A config that still contains `agent.contextChars` now stops at startup with a
+message explaining the rename. Convert with `tokens ≈ chars / 4`: the old
+default `100000` was roughly `25000` tokens, so the new default `24000`
+preserves the old working size. Running `basicagent-setup` on an existing
+config migrates the value automatically and shows what it wrote.
 
 ## 4. Use the REPL
 
@@ -167,7 +231,7 @@ basicagent
 ```
 
 ```
-basicagent 1.3.8
+basicagent 1.4.0
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 skills    basicagent, example, omarchy, ...
@@ -191,6 +255,8 @@ Commands:
 | `/skills` | List discovered skills |
 | `/tools` | List registered tools |
 | `/model [name]` | Show or change the model for this session |
+| `/context` | Show the current context size, budget, message count and summary state |
+| `/compact` | Summarize older turns now |
 | `/config` | Show the resolved config with the API key masked |
 | `/quit` | Exit (Ctrl+D works too) |
 
@@ -217,9 +283,10 @@ too. The interface has three tabs:
   call with its arguments and result, and approve/deny buttons when a guarded
   action asks. Stop cancels the running turn and closing the tab aborts it.
   It uses the same sessions as the CLI, so you can switch between the two. A
-  small context gauge in the composer shows how full the auto-trim budget
-  (`agent.contextChars`) is — not the model's context window, and unrelated to
-  `provider.maxTokens`.
+  context gauge in the composer shows the whole-prompt token budget
+  (`agent.contextTokens`): system prompt, tools, summary and messages. It is not
+  the model's context window and unrelated to `provider.maxTokens`. Compaction
+  points appear in the transcript, with the summary available to inspect.
 - **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
   agent limits, file roots, shell, web tool, skills, memory). Saving validates
   the values, writes the file and live-reloads the running agent. The API key
@@ -249,11 +316,14 @@ echo "what files changed today?" | basicagent
 basicagent --json "read README.md and return its first heading" | jq -c '.type'
 ```
 
-`--json` emits one JSON object per line: `assistant_delta`, `tool_start`,
-`tool_end`, `done`, `error`, `approval`. The final answer is the `done` event.
-Exit code is 0 on success and 1 on failure. The web interface streams the same
-events plus `approval_result` and `aborted`; there the `approval` event carries
-an `id` that is answered with `POST /api/approvals/:id`.
+`--json` emits one JSON object per line: `iteration`, `context`,
+`assistant_delta`, `tool_start`, `tool_end`, `compaction`, `done`, `error`,
+`approval`. The final answer is the `done` event. `iteration` and `context`
+carry `contextTokens`; `compaction` carries `messagesSummarized`,
+`tokensBefore`, `tokensAfter`, `summaryTokens` and the summary text. Exit code
+is 0 on success and 1 on failure. The web interface streams the same events
+plus `approval_result` and `aborted`; there the `approval` event carries an
+`id` that is answered with `POST /api/approvals/:id`.
 
 One-shot mode never waits for approval. Actions that need approval are denied
 unless you pass `--yes` (only do that in trusted, non-interactive contexts).

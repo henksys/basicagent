@@ -7,6 +7,7 @@
 //
 //   PROVIDER_PRESETS   the provider menu
 //   loadBaseConfig     defaults: the existing config, else config.example.json
+//   migrateContextBudget  convert the pre-1.4 character budget to tokens
 //   applyAnswers       merge the answers into the base config
 //   testProvider       one minimal chat completion against the provider
 //   summaryLines       the "about to write" block
@@ -45,21 +46,47 @@ export function getByPath(object, path) {
   return path.split('.').reduce((value, key) => (value == null ? undefined : value[key]), object);
 }
 
+// Convert the pre-1.4 character budget to a token budget. The runtime rejects
+// agent.contextChars, so setup is the one place that migrates it: this is
+// where an existing config is intentionally read, edited and rewritten. A
+// one-time conversion is friendlier than making the user edit JSON by hand,
+// and it does not reintroduce the old key at runtime.
+export function migrateContextBudget(raw) {
+  const out = structuredClone(raw ?? {});
+  const agent = out.agent;
+  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return { raw: out, migration: null };
+  if (!Object.prototype.hasOwnProperty.call(agent, 'contextChars')) return { raw: out, migration: null };
+  const from = agent.contextChars;
+  const chars = Number(from);
+  delete agent.contextChars;
+  if (Number.isFinite(chars) && chars > 0) {
+    // 100000 chars was roughly 25000 tokens. Keep an explicitly set
+    // contextTokens if the file already has one.
+    if (agent.contextTokens === undefined) agent.contextTokens = Math.max(1000, Math.round(chars / 4));
+    return { raw: out, migration: { from, to: agent.contextTokens } };
+  }
+  return { raw: out, migration: { from, to: null } };
+}
+
 // Defaults for the questions: the existing config file when it is there,
-// otherwise the bundled config.example.json. Returns { raw, source, found }.
+// otherwise the bundled config.example.json. Returns { raw, source, found,
+// migration }. `migration` is non-null when an old contextChars key was
+// converted, so the caller can tell the user before asking questions.
 export function loadBaseConfig(configPath, { examplePath = EXAMPLE_PATH } = {}) {
   if (existsSync(configPath)) {
-    return { raw: readConfigFile(configPath).raw, source: configPath, found: true };
+    const migrated = migrateContextBudget(readConfigFile(configPath).raw);
+    return { raw: migrated.raw, source: configPath, found: true, migration: migrated.migration };
   }
   try {
     const raw = JSON.parse(readFileSync(examplePath, 'utf8'));
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      return { raw, source: examplePath, found: false };
+      const migrated = migrateContextBudget(raw);
+      return { raw: migrated.raw, source: examplePath, found: false, migration: migrated.migration };
     }
   } catch {
     // Missing or damaged example: fall back to the built-in defaults.
   }
-  return { raw: {}, source: 'built-in defaults', found: false };
+  return { raw: {}, source: 'built-in defaults', found: false, migration: null };
 }
 
 // Merge the answers into the base config; every other key is preserved.
@@ -119,6 +146,7 @@ export function summaryLines(raw, { configPath }) {
     ['model', provider.model],
     ['api key', key],
     ['max tokens', provider.maxTokens == null ? 'provider default' : String(provider.maxTokens)],
+    ['context budget', `${raw.agent?.contextTokens ?? DEFAULTS.agent.contextTokens} tokens`],
     ['shell tool', raw.tools?.shell?.enabled ? 'enabled (every command asks approval)' : 'disabled'],
     ['memory', raw.memory?.enabled === false ? 'disabled' : `enabled, ${raw.memory?.dir}`]
   ];

@@ -12,58 +12,48 @@
 // Safety rails in the loop itself:
 //   - maxIterations caps how many model/tool rounds one turn may use
 //   - the same tool + arguments failing three times stops the turn
-//   - the context is trimmed when it grows past agent.contextChars
+//   - the context budget (agent.contextTokens) is checked before every request:
+//     older turns are summarized, or trimmed when compaction is off/fails
 //   - Ctrl+C aborts the whole turn via AbortSignal
 //
 // The loop only knows about an abstract event stream, which the CLI renders
 // either as human text or as JSON lines:
 //
-//   { type: "iteration", iteration }
+//   { type: "iteration", iteration, contextTokens }
+//   { type: "context", contextTokens }
 //   { type: "assistant_delta", text }
 //   { type: "tool_start", name, args }
 //   { type: "tool_end", name, ok, durationMs, result }
+//   { type: "compaction", messagesSummarized, tokensBefore, tokensAfter,
+//     summaryTokens, summary, iteration }
 //   { type: "warning", message }
 //   { type: "done", text }
 //   { type: "error", message }
 
 import { bounded } from './util.mjs';
+import {
+  estimateMessagesTokens,
+  estimateTextTokens,
+  estimatePromptTokens,
+  trimHistory
+} from './context.mjs';
+import {
+  SUMMARY_MAX_TOKENS,
+  buildSummaryRequest,
+  findSummaryCut,
+  normalizeSummary,
+  summaryInputTokens
+} from './compact.mjs';
+
+// Re-exported so callers that only need the accounting helpers can keep
+// importing them from the agent module.
+export { estimateMessagesTokens, estimatePromptTokens, trimHistory } from './context.mjs';
 
 export class AgentError extends Error {
   constructor(message) {
     super(message);
     this.name = 'AgentError';
   }
-}
-
-const TRIMMED_TOOL_RESULT = '[tool result trimmed to save context]';
-
-// Sum of the serialized message sizes. This is the metric trimHistory uses to
-// decide when to drop context, and the one the web interface shows as its
-// context gauge, so both always agree.
-export function contextSize(messages) {
-  return messages.reduce((total, message) => total + JSON.stringify(message).length, 0);
-}
-
-// Drop old context when the message history gets too large. Old tool results
-// are replaced by a placeholder first; after that the oldest exchanges are
-// removed, and tool messages always go together with their assistant message
-// so the provider never sees an orphaned tool result.
-export function trimHistory(messages, maxChars) {
-  if (maxChars <= 0) return messages;
-  const out = [...messages];
-  while (out.length > 2 && contextSize(out) > maxChars) {
-    const toolIndex = out.findIndex((message) => message.role === 'tool' && message.content !== TRIMMED_TOOL_RESULT);
-    if (toolIndex >= 0) {
-      out[toolIndex] = { ...out[toolIndex], content: TRIMMED_TOOL_RESULT };
-      continue;
-    }
-    // Remove the oldest exchange (index 1) plus any tool messages directly
-    // following it, keeping the final user message and the newest answer.
-    let end = 1;
-    while (end + 1 < out.length && out[end + 1].role === 'tool') end++;
-    out.splice(1, end);
-  }
-  return out;
 }
 
 // Tool arguments normally arrive as a JSON string. Some servers send an
@@ -91,16 +81,46 @@ export class Agent {
     this.emit = emit;
     this.approve = approve;
     this.messages = [];
+    // Older turns that no longer fit the budget are replaced by this text.
+    // It lives beside `messages` (and is sent as part of the system prompt)
+    // rather than pretending to be a user message, so it can never be
+    // mistaken for a new instruction or break tool-call pairing.
+    this.summary = '';
     this.system = '';
+    // Exact prompt size reported by the provider. `count` is how many messages
+    // were in that request; newer messages are estimated as a delta.
+    this.usageAnchor = null;
+    this.compactionFailureNotice = false;
+    this.toolSchemaCache = null;
   }
 
   setSystem(text) {
     this.system = text;
+    // The system prompt is part of the measured prompt, so an old anchor no
+    // longer describes the outgoing request.
+    this.usageAnchor = null;
   }
 
   // Forget the conversation but keep the system prompt and tools.
   reset() {
     this.messages = [];
+    this.summary = '';
+    this.usageAnchor = null;
+  }
+
+  // The size of the prompt that would be sent now, in tokens. Provider usage
+  // is exact; otherwise this is the byte-based estimate from context.mjs.
+  contextTokens() {
+    if (this.usageAnchor && this.usageAnchor.count <= this.messages.length) {
+      return this.usageAnchor.tokens + estimateMessagesTokens(this.messages.slice(this.usageAnchor.count));
+    }
+    return this.#overheadTokens() + estimateMessagesTokens(this.messages);
+  }
+
+  // Manually summarize old history. Used by the REPL's /compact command; the
+  // automatic path calls the same private method when the budget fills.
+  async compactNow(signal) {
+    return this.#summarizeOldMessages({ signal, iteration: null });
   }
 
   // Run one user turn. Resolves with { text, messages }.
@@ -108,21 +128,33 @@ export class Agent {
     this.messages.push({ role: 'user', content: input });
     const limits = this.config.agent;
     let lastFailure = { key: '', count: 0 };
+    this.compactionFailureNotice = false;
 
     for (let iteration = 1; iteration <= limits.maxIterations; iteration++) {
       signal?.throwIfAborted();
-      this.emit({ type: 'iteration', iteration, contextSize: contextSize(this.messages) });
+
+      // Make room before sending, not after: the request itself must fit.
+      await this.#ensureContextFits({ signal, iteration });
+      signal?.throwIfAborted();
+
+      const sentCount = this.messages.length;
+      this.emit({ type: 'iteration', iteration, contextTokens: this.contextTokens() });
 
       const result = await this.provider.chat({
         messages: this.#outgoing(),
-        tools: this.registry.schemas(),
+        tools: this.#schemas(),
         signal,
         onDelta: (text) => this.emit({ type: 'assistant_delta', text })
       });
 
+      if (Number.isFinite(Number(result.usage?.prompt_tokens)) && Number(result.usage.prompt_tokens) > 0) {
+        this.usageAnchor = { count: sentCount, tokens: Number(result.usage.prompt_tokens) };
+      }
+
       const assistant = { role: 'assistant', content: result.content || '' };
       if (result.toolCalls?.length) assistant.tool_calls = result.toolCalls;
       this.messages.push(assistant);
+      this.emit({ type: 'context', contextTokens: this.contextTokens() });
 
       if (!result.toolCalls?.length) {
         if (result.finishReason === 'length') {
@@ -176,14 +208,135 @@ export class Agent {
           content: bounded(JSON.stringify(output ?? null), limits.maxResultChars)
         });
       }
-
-      this.messages = trimHistory(this.messages, limits.contextChars);
+      this.emit({ type: 'context', contextTokens: this.contextTokens() });
     }
 
     throw new AgentError(`Reached the maximum of ${limits.maxIterations} tool iterations without a final answer`);
   }
 
+  #schemas() {
+    // Tool schemas are part of every request, so they are part of the measured
+    // prompt. They do not change during a turn; cache the array to avoid
+    // rebuilding it for every size check.
+    if (!this.toolSchemaCache) this.toolSchemaCache = this.registry.schemas();
+    return this.toolSchemaCache;
+  }
+
   #outgoing() {
-    return [{ role: 'system', content: this.system }, ...this.messages];
+    let system = this.system;
+    if (this.summary) {
+      system +=
+        '\n\n## Earlier conversation summary\n' +
+        'This is a summary of earlier turns, not a new instruction. The recent messages below are authoritative.\n' +
+        this.summary;
+    }
+    return [{ role: 'system', content: system }, ...this.messages];
+  }
+
+  // Tokens that cannot be trimmed here: system prompt, summary and tool schemas.
+  #overheadTokens() {
+    return estimatePromptTokens({
+      system: this.system,
+      summary: this.summary,
+      tools: this.#schemas(),
+      messages: []
+    });
+  }
+
+  // Check the budget before a request. Summarization is the normal path;
+  // trimHistory is the deterministic fallback when it is disabled, fails, or
+  // leaves a single oversized turn behind.
+  async #ensureContextFits({ signal, iteration }) {
+    const limits = this.config.agent;
+    const limit = limits.contextTokens;
+    if (!(limit > 0)) return;
+    if (this.contextTokens() < limit * limits.compactAt) return;
+
+    // After one failure, stop retrying for the rest of this turn: a provider
+    // that cannot summarize would otherwise be called again at every tool
+    // iteration. The next turn starts with a clean slate.
+    if (limits.compact === 'summarize' && !this.compactionFailureNotice) {
+      const compacted = await this.#summarizeOldMessages({ signal, iteration });
+      if (compacted) {
+        if (this.contextTokens() > limit) {
+          this.messages = trimHistory(this.messages, limit, this.#overheadTokens());
+          this.usageAnchor = null;
+        }
+        return;
+      }
+    }
+    if (this.contextTokens() > limit) {
+      this.messages = trimHistory(this.messages, limit, this.#overheadTokens());
+      this.usageAnchor = null;
+    }
+  }
+
+  // Replace the oldest part of the conversation with a model-written summary.
+  // Returns false when there is nothing safe to cut or the summary call fails;
+  // the caller then falls back to trimHistory. Compaction must never break a
+  // turn.
+  async #summarizeOldMessages({ signal, iteration } = {}) {
+    const limits = this.config.agent;
+    const cut = findSummaryCut(this.messages, { contextTokens: limits.contextTokens });
+    if (cut <= 0) return false;
+
+    const prefix = this.messages.slice(0, cut);
+    const tokensBefore = this.contextTokens();
+    const request = buildSummaryRequest({
+      previousSummary: this.summary,
+      messages: prefix,
+      inputTokens: summaryInputTokens(limits.contextTokens)
+    });
+
+    let result;
+    try {
+      result = await this.provider.chat({
+        messages: request,
+        tools: [],
+        signal,
+        temperature: 0,
+        maxTokens: SUMMARY_MAX_TOKENS
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#warnCompaction(error);
+      return false;
+    }
+
+    const summary = normalizeSummary(result?.content);
+    if (!summary) {
+      this.#warnCompaction(new Error('the provider returned an empty summary'));
+      return false;
+    }
+
+    this.summary = summary;
+    this.messages = this.messages.slice(cut);
+    // The system prompt just changed, so provider usage from the previous
+    // request no longer anchors the measurement.
+    this.usageAnchor = null;
+    this.compactionFailureNotice = false;
+
+    const tokensAfter = this.contextTokens();
+    this.emit({
+      type: 'compaction',
+      iteration: iteration ?? null,
+      messagesSummarized: prefix.length,
+      tokensBefore,
+      tokensAfter,
+      summaryTokens: estimateTextTokens(summary),
+      summary
+    });
+    return true;
+  }
+
+  // One warning per turn is enough. A provider that cannot summarize would
+  // otherwise produce the same notice on every tool iteration.
+  #warnCompaction(error) {
+    if (this.compactionFailureNotice) return;
+    this.compactionFailureNotice = true;
+    this.emit({
+      type: 'warning',
+      message: `Context summarization failed (${error?.message || String(error)}); falling back to trimming older messages.`
+    });
   }
 }

@@ -58,18 +58,20 @@ has no `dependencies`.
 | `src/config.mjs` | Built-in defaults, config file loading and merging (defaults <- file <- env <- flags), validation and path normalization. |
 | `src/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |
-| `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the failure circuit breaker and context trimming. Also defines the event stream. |
+| `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the failure circuit breaker and the context budget. Also defines the event stream. |
+| `src/context.mjs` | Token accounting for the whole prompt (system, tools, summary, messages) and the `trimHistory` fallback. |
+| `src/compact.mjs` | Summarization helpers: safe cut points, transcript rendering, the summarizer prompt and summary normalization. |
 | `src/tools/index.mjs` | Tool registry: schema validation, dispatch, per-call audit log. |
 | `src/tools/files.mjs` | File tools plus the root-based path policy (`checkAccess`, `softRealpath`). |
 | `src/tools/shell.mjs` | `run_command` with approval, timeout, denylist and output caps. |
 | `src/tools/web.mjs` | `fetch_url`: guarded HTTP fetching, SSRF checks, bounded reads, HTML-to-text extraction. Omitted when `tools.web.enabled` is false. |
 | `src/tools/memory-tools.mjs` | `remember`, `search_memory`, `forget`. |
 | `src/skills.mjs` | SKILL.md discovery, frontmatter parsing (plain, `>` and `|`), prompt index generation, `load_skill` tool. |
-| `src/memory.mjs` | JSONL persistence: `facts.jsonl`, `sessions/<id>.jsonl`, `last-session.txt`, `audit.jsonl`. |
+| `src/memory.mjs` | JSONL persistence: `facts.jsonl`, `sessions/<id>.jsonl` (messages plus compaction summaries), `last-session.txt`, `audit.jsonl`. |
 | `src/prompt.mjs` | System prompt assembly from persona + environment + skills + facts + tool guidance + safety rules. |
 | `src/approval.mjs` | Approval policy for guarded operations (interactive / deny / `--yes`). |
 | `src/ui.mjs` | Terminal rendering for human and JSON modes. |
-| `src/util.mjs` | Small helpers: `bounded`, `expandHome`, `resolveUserPath`, `previewJSON`, `mask`. |
+| `src/util.mjs` | Small helpers: `bounded`, `expandHome`, `resolveUserPath`, `previewJSON`, `formatTokens`, `mask`. |
 | `skills/example/SKILL.md` | Working skill template. |
 | `config.example.json` | Reference configuration. |
 | `test/` | Offline tests with a fake SSE provider; `test/live/` holds opt-in live tests. |
@@ -80,12 +82,15 @@ has no `dependencies`.
 2. `buildSystemPrompt` is called fresh each turn, so new facts and skill
    changes are picked up without a restart.
 3. `Agent.run` pushes the user message and enters the loop:
-   1. `Provider.chat` streams the model answer, emitting `assistant_delta`
-      events, and returns `{ content, toolCalls, finishReason }`.
-   2. If there are no tool calls, the loop emits `done` and returns.
-   3. Otherwise each tool call is parsed, validated and executed through the
+   1. If the prompt is over the compaction threshold, `Agent` summarizes the
+      oldest turns first (`src/compact.mjs`) or trims them when compaction is
+      off. The model never decides to do this.
+   2. `Provider.chat` streams the model answer, emitting `assistant_delta`
+      events, and returns `{ content, toolCalls, finishReason, usage }`.
+   3. If there are no tool calls, the loop emits `done` and returns.
+   4. Otherwise each tool call is parsed, validated and executed through the
       registry; each result is appended as a `role: "tool"` message.
-   4. The loop repeats (up to `agent.maxIterations`).
+   5. The loop repeats (up to `agent.maxIterations`).
 4. The CLI streams text to stdout, tool activity to stderr, appends the turn
    to the memory session, and reprompts.
 
@@ -94,16 +99,18 @@ has no `dependencies`.
 - **maxIterations** (`agent.maxIterations`, default 25) caps one turn.
 - **Circuit breaker**: the same tool name + arguments failing three times
   aborts the turn with an `AgentError`.
-- **Context trimming** (`agent.contextChars`): old tool results become a
-  placeholder first, then whole old exchanges are dropped. Tool messages are
-  removed together with the assistant message that requested them so the
-  provider never sees an orphaned `tool` message. The metric is a character
-  count of the stored messages only — the system prompt, skills and facts are
-  sent on top and not counted, and characters are not tokens — and it neither
-  reflects nor queries the provider's context window. `provider.maxTokens`
-  is a separate, optional per-request output cap. The same serialized-size
-  metric (`contextSize`) is reported on every `iteration` event and drives the
-  context gauge in the web interface.
+- **Context budget** (`agent.contextTokens`, default 24000): counted over the
+  whole prompt — system prompt, skills, facts, tool schemas, summary and
+  messages — using `provider.usage.prompt_tokens` when available and UTF-8
+  byte estimates otherwise. Before every request, `Agent` checks the budget.
+  At `agent.compactAt` (default 0.8) it summarizes the oldest turns; the cut
+  always lands on a user message so an assistant `tool_calls` message is never
+  separated from its `tool` results. Recent turns stay verbatim. If the
+  summary fails or compaction is off, `trimHistory` is the fallback: old tool
+  results become a placeholder, then whole old exchanges are dropped. The
+  summary is replayed on resume. `provider.maxTokens` remains a separate,
+  optional per-request output cap. Every iteration reports `contextTokens`;
+  the web gauge and the CLI notices use the same number.
 - **Abort**: Ctrl+C in the REPL (or SIGINT in one-shot) aborts the current
   `AbortSignal`; the provider stream and any running command are killed.
 
@@ -114,10 +121,12 @@ also written to stdout as one JSON object per line:
 
 | Event | Fields |
 | --- | --- |
-| `iteration` | `iteration`, `contextSize` (serialized conversation chars) |
+| `iteration` | `iteration`, `contextTokens` (whole-prompt estimate) |
+| `context` | `contextTokens` (after an assistant or tool message is appended) |
 | `assistant_delta` | `text` |
 | `tool_start` | `name`, `args` |
 | `tool_end` | `name`, `ok`, `durationMs`, `result` |
+| `compaction` | `messagesSummarized`, `tokensBefore`, `tokensAfter`, `summaryTokens`, `summary`, `iteration` |
 | `warning` | `message` |
 | `done` | `text` |
 | `error` | `message` |

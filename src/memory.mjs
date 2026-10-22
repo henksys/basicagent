@@ -6,12 +6,14 @@
 // ~/.local/share/basicagent, created with mode 0700):
 //
 //   facts.jsonl            durable key/value facts saved by the remember tool
-//   sessions/<id>.jsonl    one JSON object per user/assistant message
+//   sessions/<id>.jsonl    one JSON object per user/assistant message, plus
+//                          one { kind: "summary" } record per compaction
 //   last-session.txt       id of the most recent session (for --continue)
 //
 // Everything is JSON Lines: human readable, easy to grep, easy to delete.
 // Only user and assistant text is stored; tool calls/results are intentionally
-// not replayed on resume.
+// not replayed on resume. The newest summary record is replayed instead of the
+// older turns it replaced, so a resumed conversation keeps its compact form.
 //
 // Fact operations rewrite facts.jsonl atomically (write temp + rename) so a
 // crash cannot leave a half-written file.
@@ -82,14 +84,14 @@ export class Memory {
     return this.sessionId;
   }
 
-  // Resume the most recent session. Returns its user/assistant messages, or
-  // null when there is nothing to resume.
+  // Resume the most recent session. Returns its user/assistant messages and
+  // the newest summary, or null when there is nothing to resume.
   continueSession() {
     if (!existsSync(this.lastSessionPath)) return null;
     const id = readFileSync(this.lastSessionPath, 'utf8').trim();
     if (!id) return null;
     try {
-      return { id: this.startSession(id), messages: this.readSession(id) };
+      return { id: this.startSession(id), messages: this.readSession(id), summary: this.readSummary(id) };
     } catch {
       return null;
     }
@@ -116,14 +118,42 @@ export class Memory {
   readSession(id) {
     const file = join(this.sessionsDir, `${sanitizeSessionId(id)}.jsonl`);
     if (!existsSync(file)) return [];
-    const messages = [];
+    const entries = [];
     for (const line of readFileSync(file, 'utf8').split('\n')) {
       if (!line.trim()) continue;
       try {
-        const entry = JSON.parse(line);
-        if (entry.role === 'user' || entry.role === 'assistant') messages.push({ role: entry.role, content: String(entry.content ?? '') });
+        entries.push(JSON.parse(line));
       } catch {
         // Skip damaged lines.
+      }
+    }
+
+    // A summary replaces the turns before it. Replay the kept tail stored
+    // with the newest summary record, then anything appended afterwards.
+    // Older sessions (or a summary without a tail) fall back to the full
+    // message list.
+    let lastSummary = -1;
+    for (let index = 0; index < entries.length; index++) {
+      if (entries[index].kind === 'summary') lastSummary = index;
+    }
+    const messages = [];
+    if (lastSummary >= 0 && Array.isArray(entries[lastSummary].recent)) {
+      for (const message of entries[lastSummary].recent) {
+        if (message?.role === 'user' || message?.role === 'assistant') {
+          messages.push({ role: message.role, content: String(message.content ?? '') });
+        }
+      }
+      for (let index = lastSummary + 1; index < entries.length; index++) {
+        const entry = entries[index];
+        if (entry.role === 'user' || entry.role === 'assistant') {
+          messages.push({ role: entry.role, content: String(entry.content ?? '') });
+        }
+      }
+      return messages;
+    }
+    for (const entry of entries) {
+      if (entry.role === 'user' || entry.role === 'assistant') {
+        messages.push({ role: entry.role, content: String(entry.content ?? '') });
       }
     }
     return messages;
@@ -132,6 +162,49 @@ export class Memory {
   appendEvent(role, content) {
     if (!this.sessionId || !content) return;
     const entry = { ts: new Date().toISOString(), role, content: bounded(content, MAX_EVENT_BYTES) };
+    this.buffer.push(entry);
+    writeFileSync(join(this.sessionsDir, `${this.sessionId}.jsonl`), JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
+  }
+
+  // The newest compaction summary for a session, or '' when it has none.
+  readSummary(id) {
+    const file = join(this.sessionsDir, `${sanitizeSessionId(id)}.jsonl`);
+    if (!existsSync(file)) return '';
+    let summary = '';
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.kind === 'summary' && typeof entry.summary === 'string') summary = entry.summary;
+      } catch {
+        // Skip damaged lines.
+      }
+    }
+    return summary;
+  }
+
+  // Record a compaction. The event comes from the agent and already contains
+  // the summary and the token measurements shown in notices. `recentMessages`
+  // is the agent's kept tail at that moment: storing it lets a resumed session
+  // replay exactly the messages that survived compaction, instead of the old
+  // turns the summary replaced. Only user/assistant text is stored, matching
+  // the rest of the session file.
+  appendSummary(event, recentMessages = null) {
+    if (!this.sessionId || !event?.summary) return;
+    const entry = {
+      ts: new Date().toISOString(),
+      kind: 'summary',
+      summary: bounded(String(event.summary), MAX_EVENT_BYTES),
+      messagesSummarized: Number.isInteger(event.messagesSummarized) ? event.messagesSummarized : 0,
+      tokensBefore: Number.isFinite(event.tokensBefore) ? event.tokensBefore : null,
+      tokensAfter: Number.isFinite(event.tokensAfter) ? event.tokensAfter : null,
+      summaryTokens: Number.isFinite(event.summaryTokens) ? event.summaryTokens : null
+    };
+    if (Array.isArray(recentMessages)) {
+      entry.recent = recentMessages
+        .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && message.content)
+        .map((message) => ({ role: message.role, content: bounded(String(message.content), MAX_EVENT_BYTES) }));
+    }
     this.buffer.push(entry);
     writeFileSync(join(this.sessionsDir, `${this.sessionId}.jsonl`), JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
   }
@@ -184,7 +257,9 @@ export class Memory {
         if (!line.trim() || !line.toLowerCase().includes(needle)) continue;
         try {
           const entry = JSON.parse(line);
-          remember(entry.ts, `session:${file.replace(/\.jsonl$/, '')}`, `${entry.role}: ${entry.content}`);
+          const role = entry.kind === 'summary' ? 'summary' : entry.role;
+          const text = entry.kind === 'summary' ? entry.summary : entry.content;
+          if (role && text) remember(entry.ts, `session:${file.replace(/\.jsonl$/, '')}`, `${role}: ${text}`);
         } catch {
           // Skip damaged lines.
         }

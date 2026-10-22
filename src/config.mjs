@@ -50,7 +50,19 @@ export const DEFAULTS = Object.freeze({
   },
   agent: {
     maxIterations: 25,
-    contextChars: 100000,
+    // Budget for the whole prompt: system prompt, skills, saved facts, tool
+    // schemas, conversation summary and messages. This is tokens, not
+    // characters, and it is deliberately smaller than the model's context
+    // window: every request resends the prompt, and a smaller working set is
+    // cheaper, faster and usually easier for the model to follow.
+    contextTokens: 24000,
+    // "summarize" compresses older turns when the budget fills. "off" keeps
+    // the old behaviour of dropping the oldest turns instead.
+    compact: 'summarize',
+    // Fraction of contextTokens at which summarization starts (0 < x <= 1).
+    compactAt: 0.8,
+    // Per-tool-result cap. This is a different limit from contextTokens: it
+    // stops one command or download from consuming the whole budget at once.
     maxResultChars: 24000,
     // Optional replacement for the built-in persona paragraph.
     systemPrompt: '',
@@ -154,7 +166,16 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
 
   const agent = config.agent;
   if (!Number.isInteger(agent.maxIterations) || agent.maxIterations < 1) throw new Error('agent.maxIterations must be a positive integer');
-  if (!Number.isInteger(agent.contextChars) || agent.contextChars < 1000) throw new Error('agent.contextChars must be an integer of at least 1000');
+  // 1.4.0 replaced the character budget with a token budget. Do not keep an
+  // alias: an old key would otherwise sit unused in the file forever, and a
+  // silent change of units is exactly the kind of mistake that is hard to
+  // notice. Fail loudly and point at the migration instead.
+  if (Object.prototype.hasOwnProperty.call(agent, 'contextChars')) {
+    throw new Error('agent.contextChars was replaced by agent.contextTokens; run basicagent-setup to migrate it, or convert manually (100000 chars ≈ 25000 tokens)');
+  }
+  if (!Number.isInteger(agent.contextTokens) || agent.contextTokens < 1000) throw new Error('agent.contextTokens must be an integer of at least 1000');
+  if (!['summarize', 'off'].includes(agent.compact)) throw new Error('agent.compact must be "summarize" or "off"');
+  if (typeof agent.compactAt !== 'number' || !Number.isFinite(agent.compactAt) || agent.compactAt <= 0 || agent.compactAt > 1) throw new Error('agent.compactAt must be a number greater than 0 and at most 1');
   if (!Number.isInteger(agent.maxResultChars) || agent.maxResultChars < 1000) throw new Error('agent.maxResultChars must be an integer of at least 1000');
 
   const files = config.tools.files;

@@ -38,7 +38,8 @@ Done: added provider.timeoutMs handling and all tests pass.
   DeepSeek, OpenAI. Configure `baseUrl`, `model` and an API-key environment
   variable.
 - **Agent loop with limits** — iteration cap, repeated-failure circuit breaker,
-  context trimming, an optional output-token cap, Ctrl+C abort.
+  token-based context budget with automatic summarization of older turns, an
+  optional output-token cap, Ctrl+C abort.
 - **File tools** — read, write, edit, append, list, rename, with a
   root-based access policy (`rw` / `ro` / `approval` / `deny`, most specific
   root wins), symlink-safe path checks and protected paths (config file and
@@ -70,6 +71,35 @@ Done: added provider.timeoutMs handling and all tests pass.
 - **Guardrails you can see** — approval prompts, an append-only
   `audit.jsonl`, bounded outputs and a shell tool that is off by default.
 - **Zero dependencies** — Node 24+ built-ins only.
+
+## Context budget
+
+`agent.contextTokens` (default `24000`) is the size of the prompt basicagent
+is willing to send: system prompt, skills, saved facts, tool definitions, the
+conversation summary and the messages. It is counted in tokens, not
+characters.
+
+The budget is **not** the model's context window. A provider may accept 128k
+or 256k tokens, but every request resends the whole prompt, so a larger working
+set costs more, takes longer before the first token, and makes it harder for
+the model to stay focused. Keep the budget comfortably below the window and
+leave room for the answer. Typical values: 8k window → 6k budget, 32k → 16k–24k,
+128k+ → 32k–64k. The default `24000` assumes a served window of at least ~32k;
+for an 8k local model, lower it to `6000`. Ollama's `num_ctx` setting can be
+lower than the model card, so check what the server actually serves.
+
+When the budget fills, older turns are summarized and a compaction notice
+appears in the CLI or Web UI. Recent turns stay verbatim, and the summary is
+stored with the session and replayed on `--continue`. Set
+`agent.compact: "off"` to drop old turns instead of summarizing them;
+`agent.compactAt` (default `0.8`) controls when summarization starts.
+`agent.maxResultChars` is a separate per-tool-result cap, not the context
+budget.
+
+Before 1.4.0 the budget was `agent.contextChars`. It has been replaced:
+a config that still contains it is rejected at startup with a conversion hint
+(`100000` characters was roughly `25000` tokens). Running
+`basicagent-setup` on an existing config migrates the value automatically.
 
 ## Quick start
 
@@ -109,8 +139,9 @@ The UI has three tabs:
 - **Chat** — sessions in the sidebar, streamed answers, tool calls with their
   arguments and results, and approve/deny buttons when a guarded action needs
   confirmation. Stop cancels the running turn; closing the tab aborts it. A
-  context gauge shows how full the agent's auto-trim budget
-  (`agent.contextChars`) is — not the model's context window.
+  context gauge shows how full the whole-prompt token budget
+  (`agent.contextTokens`) is — not the model's context window. Compaction
+  points appear in the transcript with the summary available to inspect.
 - **Settings** — edits the same `config.json` the CLI reads (provider, agent
   limits, file roots, shell, web tool, skills, memory). Saving validates the
   result, writes the file atomically and live-reloads the agent. The API key

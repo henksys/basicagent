@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Henk Duisterwinkel
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Agent, AgentError, contextSize, parseToolArguments, trimHistory } from '../src/agent.mjs';
+import { Agent, AgentError, parseToolArguments, trimHistory } from '../src/agent.mjs';
+import { estimateMessagesTokens, TRIMMED_TOOL_RESULT } from '../src/context.mjs';
 
 // A scripted stand-in for src/provider.mjs.
 class FakeProvider {
@@ -12,7 +13,7 @@ class FakeProvider {
     this.model = 'fake';
   }
 
-  async chat({ messages, onDelta }) {
+  async chat({ messages, onDelta = () => {} }) {
     this.calls.push(structuredClone(messages));
     const reply = this.replies.shift() ?? { content: '(no more replies)', toolCalls: [], finishReason: 'stop' };
     if (reply.content) onDelta(reply.content);
@@ -28,7 +29,13 @@ const toolCall = (name, args, id = 'call_1') => ({
 
 function makeConfig(overrides = {}) {
   return {
-    agent: { maxIterations: 25, contextChars: 100000, maxResultChars: 24000 },
+    agent: {
+      maxIterations: 25,
+      contextTokens: 24000,
+      compact: 'summarize',
+      compactAt: 0.8,
+      maxResultChars: 24000
+    },
     ...overrides
   };
 }
@@ -125,7 +132,7 @@ test('maxIterations stops a runaway loop', async () => {
     finishReason: 'tool_calls'
   })));
   const registry = makeRegistry();
-  const agent = new Agent({ provider, registry, config: makeConfig({ agent: { maxIterations: 2, contextChars: 100000, maxResultChars: 24000 } }) });
+  const agent = new Agent({ provider, registry, config: makeConfig({ agent: { maxIterations: 2, contextTokens: 24000, compact: 'summarize', compactAt: 0.8, maxResultChars: 24000 } }) });
   agent.setSystem('system');
   await assert.rejects(() => agent.run('go'), /maximum of 2/);
 });
@@ -149,12 +156,12 @@ test('trimHistory drops old tool results before old messages', () => {
   ];
   const trimmed = trimHistory(messages, 500);
   const toolMessage = trimmed.find((message) => message.role === 'tool');
-  assert.equal(toolMessage.content, '[tool result trimmed to save context]');
+  assert.equal(toolMessage.content, TRIMMED_TOOL_RESULT);
   assert.equal(trimmed.length, messages.length, 'structure is preserved while trimming');
   assert.equal(trimmed.at(-1).content, 'second question');
 });
 
-test('contextSize is the trim metric and every iteration reports it', async () => {
+test('contextTokens is the trim metric and every iteration reports it', async () => {
   const provider = new FakeProvider([
     { content: '', toolCalls: [toolCall('fake_tool', { x: 1 })], finishReason: 'tool_calls' },
     { content: 'Done.', toolCalls: [], finishReason: 'stop' }
@@ -166,10 +173,119 @@ test('contextSize is the trim metric and every iteration reports it', async () =
   await agent.run('hello');
 
   const message = { role: 'user', content: 'a' };
-  assert.equal(contextSize([message]), JSON.stringify(message).length);
+  assert.deepEqual(estimateMessagesTokens([message]), estimateMessagesTokens([message]));
+  assert.ok(estimateMessagesTokens([message]) > 0);
 
   const iterations = events.filter((event) => event.type === 'iteration');
   assert.equal(iterations.length, 2);
-  assert.ok(Number.isInteger(iterations[0].contextSize) && iterations[0].contextSize > 0);
-  assert.ok(iterations[1].contextSize > iterations[0].contextSize, 'the tool result grows the measured context');
+  assert.ok(Number.isInteger(iterations[0].contextTokens) && iterations[0].contextTokens > 0);
+  assert.ok(iterations[1].contextTokens > iterations[0].contextTokens, 'the tool result grows the measured context');
+  assert.ok(events.some((event) => event.type === 'context' && event.contextTokens > 0));
+});
+
+test('provider usage anchors the context measurement', async () => {
+  const provider = new FakeProvider([
+    { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1234 } }
+  ]);
+  const registry = makeRegistry();
+  const agent = new Agent({ provider, registry, config: makeConfig(), approve: async () => true });
+  agent.setSystem('system');
+  await agent.run('hello');
+  // The anchor covers the request (user + system + tools); the assistant
+  // message appended afterwards is estimated as a delta.
+  assert.equal(agent.contextTokens(), 1234 + estimateMessagesTokens([{ role: 'assistant', content: 'ok' }]));
+});
+
+test('summarizes old history when the budget fills', async () => {
+  const provider = new FakeProvider([
+    { content: '', toolCalls: [toolCall('fake_tool', {})], finishReason: 'tool_calls' },
+    { content: 'SUMMARY OF OLD TURNS', toolCalls: [], finishReason: 'stop' },
+    { content: 'Done.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const registry = makeRegistry(() => ({ ok: true, big: 'x'.repeat(4000) }));
+  const events = [];
+  const agent = new Agent({
+    provider,
+    registry,
+    config: makeConfig({
+      agent: { maxIterations: 25, contextTokens: 1000, compact: 'summarize', compactAt: 0.5, maxResultChars: 24000 }
+    }),
+    emit: (event) => events.push(event),
+    approve: async () => true
+  });
+  agent.setSystem('system');
+  agent.messages = [
+    { role: 'user', content: 'old question' },
+    { role: 'assistant', content: 'old answer' }
+  ];
+
+  const result = await agent.run('new question');
+
+  assert.equal(result.text, 'Done.');
+  assert.equal(agent.summary, 'SUMMARY OF OLD TURNS');
+  assert.ok(!agent.messages.some((message) => message.content === 'old question'), 'old turn was replaced');
+  const compaction = events.find((event) => event.type === 'compaction');
+  assert.ok(compaction, 'a compaction event was emitted');
+  assert.equal(compaction.messagesSummarized, 2);
+  assert.ok(compaction.tokensBefore > compaction.tokensAfter);
+  assert.match(compaction.summary, /SUMMARY OF OLD TURNS/);
+  // The summary is part of the system prompt on the final request.
+  const system = provider.calls.at(-1)[0].content;
+  assert.match(system, /Earlier conversation summary/);
+  assert.match(system, /SUMMARY OF OLD TURNS/);
+});
+
+test('compaction can be turned off and falls back to trimming', async () => {
+  const provider = new FakeProvider([
+    { content: '', toolCalls: [toolCall('fake_tool', {})], finishReason: 'tool_calls' },
+    { content: 'Done.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const registry = makeRegistry(() => ({ ok: true, big: 'x'.repeat(8000) }));
+  const events = [];
+  const agent = new Agent({
+    provider,
+    registry,
+    config: makeConfig({
+      agent: { maxIterations: 25, contextTokens: 1000, compact: 'off', compactAt: 0.5, maxResultChars: 24000 }
+    }),
+    emit: (event) => events.push(event),
+    approve: async () => true
+  });
+  agent.setSystem('system');
+
+  await agent.run('go');
+
+  assert.ok(!events.some((event) => event.type === 'compaction'), 'no summary was attempted');
+  assert.equal(agent.messages.find((message) => message.role === 'tool').content, TRIMMED_TOOL_RESULT);
+});
+
+test('a failed summary falls back to trimming without breaking the turn', async () => {
+  const provider = new FakeProvider([
+    { content: '', toolCalls: [toolCall('fake_tool', {})], finishReason: 'tool_calls' },
+    { content: '', toolCalls: [], finishReason: 'stop' }, // empty summary
+    { content: 'Done.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const registry = makeRegistry(() => ({ ok: true, big: 'x'.repeat(8000) }));
+  const events = [];
+  const agent = new Agent({
+    provider,
+    registry,
+    config: makeConfig({
+      agent: { maxIterations: 25, contextTokens: 1000, compact: 'summarize', compactAt: 0.5, maxResultChars: 24000 }
+    }),
+    emit: (event) => events.push(event),
+    approve: async () => true
+  });
+  agent.setSystem('system');
+  agent.messages = [
+    { role: 'user', content: 'old question' },
+    { role: 'assistant', content: 'old answer' }
+  ];
+
+  const result = await agent.run('new question');
+
+  assert.equal(result.text, 'Done.');
+  assert.equal(agent.summary, '');
+  assert.ok(events.some((event) => event.type === 'warning' && /summarization failed/i.test(event.message)));
+  assert.equal(agent.messages.find((message) => message.role === 'tool').content, TRIMMED_TOOL_RESULT);
 });

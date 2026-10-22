@@ -93,6 +93,52 @@ test('--yes approves guarded actions', async (t) => {
   assert.equal(readFileSync(join(dir, 'protected.txt'), 'utf8'), 'yes');
 });
 
+test('compaction persists and is replayed by --continue', async (t) => {
+  const server = await startFakeProvider([
+    [textChunk('Old answer.'), finishChunk('stop')],
+    [toolChunk({ index: 0, id: 'c1', name: 'read_file', args: '{"path":"big.txt"}' }), finishChunk('tool_calls')],
+    [textChunk('SUMMARY OF THE OLD TURN'), finishChunk('stop')],
+    [textChunk('Done.'), finishChunk('stop')],
+    [textChunk('Resumed.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server, {
+    memory: { enabled: true, dir: './data' },
+    agent: { maxIterations: 25, contextTokens: 4000, compact: 'summarize', compactAt: 0.8, maxResultChars: 24000 }
+  });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'big.txt'), 'x'.repeat(20000));
+
+  const first = await runCli(['--config', configPath, '--json', 'old question'], { cwd: dir });
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(parseJSONL(first.stdout).find((event) => event.type === 'done').text, 'Old answer.');
+
+  const second = await runCli(['--config', configPath, '--json', '--continue', 'read big.txt'], { cwd: dir });
+  assert.equal(second.code, 0, second.stderr);
+  const secondEvents = parseJSONL(second.stdout);
+  const compaction = secondEvents.find((event) => event.type === 'compaction');
+  assert.ok(compaction, JSON.stringify(secondEvents));
+  assert.equal(compaction.summary, 'SUMMARY OF THE OLD TURN');
+  assert.equal(parseJSONL(second.stdout).find((event) => event.type === 'done').text, 'Done.');
+
+  const sessionDir = join(dir, 'data', 'sessions');
+  const sessionFile = join(sessionDir, readdirSync(sessionDir)[0]);
+  const lines = readFileSync(sessionFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const summaryLine = lines.find((entry) => entry.kind === 'summary');
+  assert.ok(summaryLine, 'the summary is stored in the CLI session');
+  assert.deepEqual(summaryLine.recent, [{ role: 'user', content: 'read big.txt' }]);
+
+  const third = await runCli(['--config', configPath, '--json', '--continue', 'again'], { cwd: dir });
+  assert.equal(third.code, 0, third.stderr);
+  assert.equal(parseJSONL(third.stdout).find((event) => event.type === 'done').text, 'Resumed.');
+
+  // The resumed request carries the summary and not the turns it replaced.
+  const resumedRequest = server.requests.at(-1);
+  assert.match(resumedRequest.messages[0].content, /Earlier conversation summary/);
+  assert.match(resumedRequest.messages[0].content, /SUMMARY OF THE OLD TURN/);
+  assert.ok(!resumedRequest.messages.some((message) => message.content === 'old question'), 'old turn is not resent');
+});
+
 test('a repeated failing tool call stops the run with exit code 1', async (t) => {
   const server = await startFakeProvider([
     [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"../escape.txt","content":"x"}' }), finishChunk('tool_calls')]

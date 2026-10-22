@@ -51,6 +51,14 @@ export function previewJSON(value, maxBytes = 160) {
   return bounded(text, maxBytes);
 }
 
+// Compact token count for notices and the REPL: 999, 1.5k, 25k.
+export function formatTokens(value) {
+  const tokens = Math.max(0, Math.round(Number(value) || 0));
+  if (tokens < 1000) return String(tokens);
+  if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
+  return `${Math.round(tokens / 1000)}k`;
+}
+
 // Mask a secret for display. Never prints the full value.
 export function mask(secret) {
   const value = String(secret ?? '');

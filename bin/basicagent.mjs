@@ -9,7 +9,8 @@
 //   basicagent --json "..."        one-shot with JSON-lines events on stdout
 //   echo "prompt" | basicagent     read the prompt from stdin
 //
-// The REPL supports: /help /new /reload /skills /tools /model /config /quit
+// The REPL supports: /help /new /reload /skills /tools /model /context
+//                     /compact /config /quit
 //
 // One-shot mode denies approval-required actions unless --yes is given, so
 // scripts never hang on a prompt. The REPL asks interactively; --yes there
@@ -28,7 +29,7 @@ import { discoverSkills } from '../src/skills.mjs';
 import { buildSystemPrompt } from '../src/prompt.mjs';
 import { createUI, promptLabel } from '../src/ui.mjs';
 import { createApproval } from '../src/approval.mjs';
-import { mask } from '../src/util.mjs';
+import { formatTokens, mask } from '../src/util.mjs';
 
 const VERSION = pkg.version;
 
@@ -58,7 +59,8 @@ Options:
   -v, --version      Show the version
 
 REPL commands:
-  /help /new /reload /skills /tools /model [name] /config /quit
+  /help /new /reload /skills /tools /model [name] /context /compact
+  /config /quit
 
 Settings come from, in order: built-in defaults, the config file,
 BASICAGENT_API_KEY/BASICAGENT_BASE_URL/BASICAGENT_MODEL/BASICAGENT_DATA_DIR,
@@ -142,7 +144,10 @@ async function main() {
   const memory = config.memory.enabled && !values.ephemeral ? new Memory({ dir: config.memory.dir }) : null;
 
   // Conversation history: new session by default, or resume with --continue.
+  // The summary is stored separately from the messages; an agent that resumes
+  // without it would immediately have to re-summarize the same old turns.
   let history = [];
+  let summary = '';
   if (memory) {
     if (values.continue) {
       const resumed = memory.continueSession();
@@ -151,9 +156,12 @@ async function main() {
         process.exit(1);
       }
       history = resumed.messages;
+      summary = resumed.summary || '';
     } else if (values.session) {
       try {
-        history = memory.readSession(memory.startSession(values.session));
+        const id = memory.startSession(values.session);
+        history = memory.readSession(id);
+        summary = memory.readSummary(id);
       } catch (error) {
         ui.error(error.message);
         process.exit(2);
@@ -192,8 +200,21 @@ async function main() {
       case 'tool_end':
         ui.toolEnd(event.name, event.ok, event.durationMs, event.result);
         break;
+      case 'compaction':
+        // Persist before the notice so a crash cannot leave the conversation
+        // without the summary the model has already been told about.
+        memory?.appendSummary(event, agent.messages);
+        ui.info(
+          `[context] summarized ${event.messagesSummarized} messages ` +
+          `(~${formatTokens(event.tokensBefore)} → ~${formatTokens(event.tokensAfter)} tokens)`
+        );
+        break;
       case 'warning':
         ui.warn(event.message);
+        break;
+      case 'context':
+        // The web interface uses this to update its gauge; the terminal has
+        // no persistent context display.
         break;
       default:
         break;
@@ -212,6 +233,7 @@ async function main() {
     registry = createRegistry({ config, memory, skills, cwd, onAuditError: (text) => ui.warn(text) });
     agent = new Agent({ provider, registry, config, emit: onEvent, approve });
     agent.messages = history;
+    agent.summary = summary;
   }
 
   function refreshSystemPrompt() {
@@ -280,7 +302,7 @@ async function main() {
     const argument = rest.join(' ').trim();
     switch (name) {
       case 'help':
-        ui.banner('Commands: /new /reload /skills /tools /model [name] /config /quit');
+        ui.banner('Commands: /new /reload /skills /tools /model [name] /context /compact /config /quit');
         break;
       case 'quit':
       case 'exit':
@@ -294,6 +316,7 @@ async function main() {
         break;
       case 'reload': {
         const messages = agent.messages;
+        const keptSummary = agent.summary;
         try {
           config = loadConfig({ flags, cwd });
         } catch (error) {
@@ -302,6 +325,7 @@ async function main() {
         }
         build();
         agent.messages = messages;
+        agent.summary = keptSummary;
         refreshSystemPrompt();
         ui.info(`Reloaded: model ${provider.model}, ${skills.size} skills, ${registry.names().length} tools.`);
         break;
@@ -321,6 +345,34 @@ async function main() {
           ui.info(`model: ${provider.model}`);
         }
         break;
+      case 'context': {
+        const used = agent.contextTokens();
+        const limit = config.agent.contextTokens;
+        const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+        ui.info(
+          `context ${formatTokens(used)} / ${formatTokens(limit)} tokens (${percent}%), ` +
+          `${agent.messages.length} messages, summary: ${agent.summary ? 'yes' : 'no'}`
+        );
+        break;
+      }
+      case 'compact': {
+        if (busy) {
+          ui.warn('Still working; press Ctrl+C to cancel first.');
+          break;
+        }
+        busy = true;
+        controller = new AbortController();
+        try {
+          const compacted = await agent.compactNow(controller.signal);
+          if (!compacted) ui.info('Nothing old enough to summarize yet.');
+        } catch (error) {
+          renderError(error);
+        } finally {
+          busy = false;
+          controller = null;
+        }
+        break;
+      }
       case 'config':
         ui.info(JSON.stringify(redactConfig(config), null, 2));
         break;

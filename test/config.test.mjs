@@ -17,6 +17,9 @@ test('defaults load when no config file exists', () => {
     const config = loadConfig({ env: { HOME: dir, XDG_CONFIG_HOME: join(dir, '.config') }, cwd: dir });
     assert.equal(config.provider.baseUrl, 'http://localhost:11434/v1');
     assert.equal(config.provider.maxTokens, null, 'no output cap by default');
+    assert.equal(config.agent.contextTokens, 24000, 'whole-prompt token budget');
+    assert.equal(config.agent.compact, 'summarize');
+    assert.equal(config.agent.compactAt, 0.8);
     assert.equal(config.tools.files.roots.length, 1);
     assert.equal(config.tools.files.roots[0].path, dir);
     assert.equal(config.paths.configFound, false);
@@ -91,6 +94,14 @@ test('invalid values are rejected with clear errors', () => {
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /access/);
     writeFileSync(configPath, JSON.stringify({ agent: { maxIterations: 0 } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /maxIterations/);
+    writeFileSync(configPath, JSON.stringify({ agent: { contextChars: 100000 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /contextChars was replaced by agent\.contextTokens/);
+    writeFileSync(configPath, JSON.stringify({ agent: { contextTokens: 100 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /contextTokens/);
+    writeFileSync(configPath, JSON.stringify({ agent: { compact: 'maybe' } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /agent\.compact/);
+    writeFileSync(configPath, JSON.stringify({ agent: { compactAt: 2 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /compactAt/);
     writeFileSync(configPath, JSON.stringify({ provider: { maxTokens: 0 } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /maxTokens/);
     writeFileSync(configPath, 'not json');

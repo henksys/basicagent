@@ -170,13 +170,25 @@
                 <input data-config="agent.maxIterations" data-number="true" inputmode="numeric" placeholder="25">
               </label>
               <label class="form-field">
-                <span>Context characters</span>
-                <input data-config="agent.contextChars" data-number="true" inputmode="numeric" placeholder="100000">
+                <span>Context budget (tokens)</span>
+                <input data-config="agent.contextTokens" data-number="true" inputmode="numeric" placeholder="24000">
               </label>
               <label class="form-field">
-                <span>Max tool result characters</span>
+                <span>Context compaction</span>
+                <select data-config="agent.compact">
+                  <option value="summarize">summarize older turns</option>
+                  <option value="off">off (drop old turns)</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Max tool result size <span class="form-hint">(characters, per tool call)</span></span>
                 <input data-config="agent.maxResultChars" data-number="true" inputmode="numeric" placeholder="24000">
               </label>
+              <p class="form-note span-2">
+                The context budget counts the whole prompt: system prompt, skills, saved facts, tool
+                definitions, conversation summary and messages. It is not the model's context window.
+                When the budget fills, older turns are summarized (or dropped when compaction is off).
+              </p>
               <label class="form-field">
                 <span>Custom system prompt file</span>
                 <input data-config="agent.systemPromptFile" placeholder="~/.config/basicagent/persona.md">

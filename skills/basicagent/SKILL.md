@@ -37,10 +37,13 @@ Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
   `apiKeyEnv` (name of an environment variable), `temperature`, `maxTokens`
   (optional cap on one reply; unset means the provider's own default is used),
   `timeoutMs`, `toolChoice` (omit it for Ollama).
-- `agent`: `maxIterations`, `contextChars` (character budget for the stored
-  conversation before old history is trimmed — not the model's context window),
-  `maxResultChars`, `systemPrompt` / `systemPromptFile` (use these to
-  rename/re-persona yourself; the default persona is in `persona-example.md`).
+- `agent`: `maxIterations`, `contextTokens` (budget for the whole prompt —
+  system prompt, tools, summary and messages — not the model's context window),
+  `compact` (`summarize` or `off`), `compactAt` (fraction of the budget at
+  which older turns are summarized), `maxResultChars` (cap for one tool
+  result), `systemPrompt` / `systemPromptFile` (use these to rename/re-persona
+  yourself; the default persona is in `persona-example.md`). The pre-1.4
+  `contextChars` key is rejected; `basicagent-setup` migrates it.
 - `tools.files`: `roots` (`{path, access}` with `rw` / `ro` / `approval` /
   `deny`), `protectedPaths`, size caps.
 - `tools.shell`: `enabled` (default false), `approval` (`always` / `never`),

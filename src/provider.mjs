@@ -40,14 +40,23 @@ export class Provider {
   //   { content, toolCalls, finishReason, usage }
   // `toolCalls` is an array of { id, type: "function", function: { name, arguments } }.
   // `onDelta` receives streamed text chunks as they arrive.
-  async chat({ messages, tools, signal, onDelta = () => {} }) {
+  // `temperature` and `maxTokens` default to the configured values; the
+  // summarizer overrides both for its own small, deterministic request.
+  async chat({
+    messages,
+    tools,
+    signal,
+    onDelta = () => {},
+    temperature = this.config.temperature,
+    maxTokens = this.config.maxTokens
+  }) {
     const body = {
       model: this.config.model,
       messages,
       stream: true,
-      temperature: this.config.temperature
+      temperature
     };
-    if (this.config.maxTokens != null) body.max_tokens = this.config.maxTokens;
+    if (maxTokens != null) body.max_tokens = maxTokens;
     if (tools?.length) {
       body.tools = tools;
       if (this.config.toolChoice) body.tool_choice = this.config.toolChoice;

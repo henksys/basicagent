@@ -167,31 +167,32 @@
 
   // ===== Chat =================================================================
 
-  const chat = { sessionId: null, busy: false, assistantEl: null, pendingTools: [], contextSize: null };
+  const chat = { sessionId: null, busy: false, assistantEl: null, pendingTools: [], contextTokens: null };
 
-  // Compact character count for the context gauge (999, 1.5k, 25k).
-  function formatChars(value) {
-    const size = Number(value) || 0;
-    if (size < 1000) return String(size);
-    if (size < 10000) return `${(size / 1000).toFixed(1)}k`;
-    return `${Math.round(size / 1000)}k`;
+  // Compact token count for the context gauge (999, 1.5k, 25k).
+  function formatTokens(value) {
+    const tokens = Math.max(0, Math.round(Number(value) || 0));
+    if (tokens < 1000) return String(tokens);
+    if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
+    return `${Math.round(tokens / 1000)}k`;
   }
 
-  // The gauge compares the serialized conversation size (the same metric the
-  // server uses to trim history) with the agent's auto-trim budget; at 100%
-  // the oldest messages are dropped before the next request.
+  // The gauge compares the whole prompt (system prompt, tools, summary and
+  // messages) with the configured budget. That is the metric the agent uses
+  // for summarization, so the number and the behavior always agree. The
+  // provider's context window is a separate, larger ceiling.
   function renderContextGauge() {
     const gauge = $('#context-gauge');
-    const limit = status?.contextChars;
-    if (!limit || chat.contextSize == null) {
+    const limit = status?.contextTokens;
+    if (!limit || chat.contextTokens == null) {
       gauge.hidden = true;
       return;
     }
-    const percent = Math.min(100, Math.round((chat.contextSize / limit) * 100));
+    const percent = Math.min(100, Math.round((chat.contextTokens / limit) * 100));
     gauge.hidden = false;
-    gauge.textContent = `context ${percent}% (${formatChars(chat.contextSize)}/${formatChars(limit)} chars)`;
+    gauge.textContent = `context ${percent}% · ${formatTokens(chat.contextTokens)} / ${formatTokens(limit)} tokens`;
     gauge.className = `context-gauge${percent >= 90 ? ' full' : ''}`;
-    gauge.title = "Serialized conversation size against the agent's auto-trim budget; at 100% the oldest messages are dropped.";
+    gauge.title = "Whole prompt (system prompt, tools, summary and messages) against the context budget. When it fills, older turns are summarized; this is not the model's context window.";
   }
 
   function scrollMessages() {
@@ -212,6 +213,28 @@
 
   function addNotice(text, kind = '') {
     const notice = el('div', `notice ${kind}`.trim(), text);
+    $('#messages').append(notice);
+    scrollMessages();
+  }
+
+  // A compaction is visible in the transcript so the user can tell why the
+  // conversation suddenly remembers less. The summary is expandable: it is
+  // lossy, and being able to inspect it is worth the few lines of UI.
+  function addCompactionNotice(event) {
+    const notice = el('div', 'notice compaction');
+    const count = event.messagesSummarized
+      ? `${event.messagesSummarized} messages`
+      : 'older messages';
+    const sizes = Number.isFinite(event.tokensBefore) && Number.isFinite(event.tokensAfter)
+      ? `, ${formatTokens(event.tokensBefore)} → ${formatTokens(event.tokensAfter)} tokens`
+      : '';
+    notice.append(el('div', '', `Earlier conversation summarized — ${count}${sizes}.`));
+    if (event.summary) {
+      const details = document.createElement('details');
+      details.append(el('summary', '', 'show summary'));
+      details.append(el('pre', 'summary-text', event.summary));
+      notice.append(details);
+    }
     $('#messages').append(notice);
     scrollMessages();
   }
@@ -294,10 +317,23 @@
     switch (event.type) {
       case 'iteration':
         setComposerHint(`working… (iteration ${event.iteration})`);
-        if (typeof event.contextSize === 'number') {
-          chat.contextSize = event.contextSize;
+        if (typeof event.contextTokens === 'number') {
+          chat.contextTokens = event.contextTokens;
           renderContextGauge();
         }
+        break;
+      case 'context':
+        if (typeof event.contextTokens === 'number') {
+          chat.contextTokens = event.contextTokens;
+          renderContextGauge();
+        }
+        break;
+      case 'compaction':
+        if (typeof event.tokensAfter === 'number') {
+          chat.contextTokens = event.tokensAfter;
+          renderContextGauge();
+        }
+        addCompactionNotice(event);
         break;
       case 'assistant_delta': {
         // Keep the answer chronological: start a fresh bubble whenever the
@@ -415,24 +451,27 @@
 
   async function newSession() {
     const data = await api('/api/sessions', { method: 'POST', body: {} });
-    activateSession(data.id, data.messages, data.contextSize ?? 0);
+    activateSession(data.id, data.messages, data.contextTokens ?? 0);
   }
 
   async function openSession(id) {
     const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    activateSession(data.id, data.messages, data.contextSize ?? 0);
+    activateSession(data.id, data.messages, data.contextTokens ?? 0);
   }
 
-  function activateSession(id, messages, contextSize = 0) {
+  function activateSession(id, messages, contextTokens = 0) {
     chat.sessionId = id;
     $('#messages').textContent = '';
     chat.assistantEl = null;
     chat.pendingTools = [];
-    chat.contextSize = contextSize;
+    chat.contextTokens = contextTokens;
     renderContextGauge();
     $('#chat-title').textContent = id;
     if (messages && messages.length) {
-      for (const message of messages) addMessage(message.role, message.content);
+      for (const message of messages) {
+        if (message.kind === 'compaction') addCompactionNotice(message);
+        else addMessage(message.role, message.content);
+      }
     } else {
       addNotice('New conversation. Ask basicagent anything — it can read and write files and use skills.');
     }
@@ -583,6 +622,13 @@
       if (input.type === 'checkbox') {
         const rawValue = getByPath(raw, path);
         input.checked = rawValue === undefined ? Boolean(getByPath(effective, path)) : Boolean(rawValue);
+        continue;
+      }
+      if (input.tagName === 'SELECT') {
+        // A select has no useful empty state; show the effective default when
+        // the config file does not set the key yet.
+        const rawValue = getByPath(raw, path);
+        input.value = String(rawValue ?? getByPath(effective, path) ?? '');
         continue;
       }
       const value = getByPath(raw, path);
@@ -826,7 +872,7 @@
         chat.sessionId = null;
         chat.assistantEl = null;
         chat.pendingTools = [];
-        chat.contextSize = null;
+        chat.contextTokens = null;
         $('#messages').textContent = '';
         $('#chat-title').textContent = 'Chat';
         renderContextGauge();

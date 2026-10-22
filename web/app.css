@@ -499,6 +499,21 @@ code {
 }
 .notice.error { color: var(--error); border-left-color: var(--error); }
 .notice.warn { color: var(--fg-muted); border-left-color: var(--accent); }
+.notice.compaction { color: var(--fg-muted); border-left-color: var(--accent); }
+.notice.compaction details { margin-top: 0.35rem; }
+.notice.compaction summary { cursor: pointer; color: var(--fg-muted); }
+.notice.compaction .summary-text {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 0.8rem/1.5 var(--font-mono);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
 
 .composer { border-top: 1px solid var(--border); padding: 0.9rem 1.2rem 1.1rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--surface); }
 .composer textarea {

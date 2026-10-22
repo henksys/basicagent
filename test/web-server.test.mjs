@@ -151,7 +151,7 @@ test('status and static files', async (t) => {
   assert.equal(status, 200);
   assert.equal(data.model, 'fake-model');
   assert.equal(data.memoryEnabled, true);
-  assert.equal(data.contextChars, 100000);
+  assert.equal(data.contextTokens, 24000);
   assert.ok(data.tools.includes('write_file'));
   assert.ok(data.tools.includes('fetch_url'));
   assert.ok(data.skills.some((skill) => skill.name === 'basicagent'), 'bundled skill is visible');
@@ -169,15 +169,15 @@ test('chat streams events, persists the session and lists it', async (t) => {
   const session = await json('/api/sessions', { method: 'POST', body: {} });
   assert.equal(session.status, 200);
   assert.match(session.data.id, /^\d{14}-[0-9a-f]{4}$/);
-  assert.equal(session.data.contextSize, 0);
+  assert.ok(session.data.contextTokens > 0, 'even a new session has a system prompt and tools');
 
   const result = await stream(session.data.id, 'say hi');
   assert.equal(result.status, 200);
   const types = result.events.map((event) => event.type);
-  assert.deepEqual(types, ['iteration', 'assistant_delta', 'done']);
-  assert.ok(Number.isInteger(result.events[0].contextSize) && result.events[0].contextSize > 0, 'iterations carry the context size');
+  assert.deepEqual(types, ['iteration', 'assistant_delta', 'context', 'done']);
+  assert.ok(Number.isInteger(result.events[0].contextTokens) && result.events[0].contextTokens > 0, 'iterations carry the context size');
   assert.equal(result.events[1].text, 'Hello from the fake.');
-  assert.equal(result.events[2].text, 'Hello from the fake.');
+  assert.equal(result.events[3].text, 'Hello from the fake.');
 
   const sessionFile = join(dir, 'data', 'sessions', `${session.data.id}.jsonl`);
   assert.ok(existsSync(sessionFile), 'session is persisted');
@@ -195,12 +195,68 @@ test('chat streams events, persists the session and lists it', async (t) => {
   assert.equal(transcript.data.messages.length, 2);
   assert.equal(transcript.data.messages[0].role, 'user');
   assert.ok(transcript.data.messages[0].ts, 'transcript includes timestamps');
-  assert.ok(transcript.data.contextSize > 0, 'stored sessions report a context size');
+  assert.ok(transcript.data.contextTokens > 0, 'stored sessions report a context size');
 
   const missing = await json('/api/chat', { method: 'POST', body: { message: 'hi' } });
   assert.equal(missing.status, 400);
   const empty = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: '   ' } });
   assert.equal(empty.status, 400);
+});
+
+test('compaction is streamed and persisted with the transcript', async (t) => {
+  const provider = await startFakeProvider([
+    [textChunk('Old answer.'), finishChunk('stop')],
+    [toolChunk({ id: 'call_read', name: 'read_file', args: JSON.stringify({ path: 'big.txt' }) }), finishChunk('tool_calls')],
+    [textChunk('SUMMARY OF THE OLD TURN'), finishChunk('stop')],
+    [textChunk('Done.'), finishChunk('stop')],
+    [textChunk('Resumed.'), finishChunk('stop')]
+  ]);
+  t.after(() => provider.close());
+  const { dir, json, stream, started } = await setup(t, {
+    baseUrl: provider.baseUrl,
+    config: { agent: { contextTokens: 4000, compact: 'summarize', compactAt: 0.8, maxResultChars: 24000 } }
+  });
+  writeFileSync(join(dir, 'big.txt'), 'x'.repeat(20000));
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  const first = await stream(session.data.id, 'old question');
+  assert.equal(first.status, 200);
+  assert.ok(!first.events.some((event) => event.type === 'compaction'), 'the first turn is small');
+
+  const second = await stream(session.data.id, 'new question');
+  assert.equal(second.status, 200);
+  const compaction = second.events.find((event) => event.type === 'compaction');
+  assert.ok(compaction, 'a compaction event is streamed');
+  assert.equal(compaction.summary, 'SUMMARY OF THE OLD TURN');
+  assert.ok(second.events.some((event) => event.type === 'context'));
+
+  const file = join(dir, 'data', 'sessions', `${session.data.id}.jsonl`);
+  const lines = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const summaryLine = lines.find((entry) => entry.kind === 'summary');
+  assert.ok(summaryLine, 'the summary is persisted in the session');
+  assert.equal(summaryLine.summary, 'SUMMARY OF THE OLD TURN');
+
+  const transcript = await json(`/api/sessions/${session.data.id}`);
+  assert.equal(transcript.status, 200);
+  const marker = transcript.data.messages.find((message) => message.kind === 'compaction');
+  assert.ok(marker, 'the transcript carries a compaction marker');
+  assert.equal(marker.summary, 'SUMMARY OF THE OLD TURN');
+  assert.ok(transcript.data.contextTokens > 0);
+
+  // Drop the live session and reopen it from disk: the summary must be
+  // replayed, and the turns it replaced must not be sent to the provider.
+  started.manager.sessions.delete(session.data.id);
+  const reopened = await json('/api/sessions', { method: 'POST', body: { id: session.data.id } });
+  assert.equal(reopened.status, 200);
+  assert.ok(reopened.data.messages.some((message) => message.kind === 'compaction'));
+  assert.ok(reopened.data.contextTokens > 0);
+
+  const third = await stream(session.data.id, 'again');
+  assert.equal(third.status, 200);
+  const resumedRequest = provider.requests.at(-1);
+  assert.match(resumedRequest.messages[0].content, /Earlier conversation summary/);
+  assert.match(resumedRequest.messages[0].content, /SUMMARY OF THE OLD TURN/);
+  assert.ok(!resumedRequest.messages.some((message) => message.content === 'old question'), 'the summarized turn is not resent');
 });
 
 test('sessions can be deleted from the Memory API', async (t) => {

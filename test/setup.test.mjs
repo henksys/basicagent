@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFakeProvider, textChunk, finishChunk } from './fixtures/fake-server.mjs';
-import { applyAnswers, loadBaseConfig, matchingPreset, summaryLines, testProvider } from '../src/setup.mjs';
+import { applyAnswers, loadBaseConfig, matchingPreset, migrateContextBudget, summaryLines, testProvider } from '../src/setup.mjs';
 import { DEFAULTS } from '../src/config.mjs';
 
 const bin = fileURLToPath(new URL('../bin/basicagent-setup.mjs', import.meta.url));
@@ -95,6 +95,35 @@ test('loadBaseConfig prefers an existing config and falls back to the example', 
   assert.deepEqual(broken.raw, {});
 });
 
+test('migrateContextBudget converts the old character budget once', () => {
+  const { raw, migration } = migrateContextBudget({
+    agent: { contextChars: 100000, maxIterations: 5 },
+    custom: { keep: true }
+  });
+  assert.deepEqual(migration, { from: 100000, to: 25000 });
+  assert.equal(raw.agent.contextTokens, 25000);
+  assert.ok(!('contextChars' in raw.agent));
+  assert.equal(raw.agent.maxIterations, 5);
+  assert.deepEqual(raw.custom, { keep: true });
+});
+
+test('migrateContextBudget discards an invalid old value', () => {
+  const { raw, migration } = migrateContextBudget({ agent: { contextChars: 'lots' } });
+  assert.deepEqual(migration, { from: 'lots', to: null });
+  assert.ok(!('contextChars' in raw.agent));
+  assert.ok(!('contextTokens' in raw.agent), 'the runtime default applies');
+});
+
+test('loadBaseConfig migrates an existing config and reports it', (t) => {
+  const { configPath } = workspace(t);
+  writeFileSync(configPath, JSON.stringify({ agent: { contextChars: 100000 }, provider: { model: 'mine' } }));
+  const found = loadBaseConfig(configPath);
+  assert.equal(found.raw.agent.contextTokens, 25000);
+  assert.ok(!('contextChars' in found.raw.agent));
+  assert.deepEqual(found.migration, { from: 100000, to: 25000 });
+  assert.equal(found.raw.provider.model, 'mine');
+});
+
 test('testProvider reports unreachable providers instead of throwing', async () => {
   const result = await testProvider(
     { provider: { baseUrl: 'http://127.0.0.1:9/v1', model: 'none' } },
@@ -117,6 +146,7 @@ test('summaryLines describe the provider, key source and memory', () => {
   assert.equal(asObject['shell tool'], 'disabled');
   assert.equal(asObject.memory, 'enabled, ~/data');
   assert.equal(asObject['max tokens'], '4096');
+  assert.equal(asObject['context budget'], '24000 tokens');
 
   const noCap = Object.fromEntries(summaryLines({ provider: { baseUrl: 'http://x/v1', model: 'm' } }, { configPath: '/tmp/config.json' }));
   assert.equal(noCap['max tokens'], 'provider default');
@@ -182,6 +212,23 @@ test('an existing config keeps its values and unrelated settings', async (t) => 
   assert.deepEqual(raw.tools.files.roots, [{ path: '/somewhere', access: 'ro' }]);
   assert.equal(raw.tools.shell.enabled, true);
   assert.deepEqual(raw.custom, { keep: true });
+});
+
+test('setup migrates contextChars from an existing config', async (t) => {
+  const { dir, configPath } = workspace(t);
+  writeFileSync(configPath, JSON.stringify({
+    provider: { baseUrl: 'http://localhost:9999/v1', model: 'my-model', apiKey: 'sekret', apiKeyEnv: 'MY_KEY' },
+    agent: { contextChars: 100000 },
+    tools: { shell: { enabled: true } }
+  }));
+  const input = ['', '', '', '', '', '', '', join(dir, 'data'), '', ''].join('\n') + '\n';
+  const result = await runSetup(['--config', configPath, '--no-start', '--no-test'], { cwd: dir, input });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Migrating agent\.contextChars=100000 to agent\.contextTokens=25000/);
+  const raw = readConfig(configPath);
+  assert.equal(raw.agent.contextTokens, 25000);
+  assert.ok(!('contextChars' in raw.agent), 'the old key is gone after setup');
 });
 
 test('the provider test runs against the configured provider', async (t) => {
