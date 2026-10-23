@@ -261,7 +261,7 @@ Commands:
 | `/model [name]` | Show or change the model for this session |
 | `/context` | Show the current context size, budget, message count and summary state |
 | `/compact` | Summarize older turns now |
-| `/readonly [on|off]` | Show or change read-only tool mode for this session |
+| `/readonly` | [on or off] Show or change read-only tool mode for this session |
 | `/config` | Show the resolved config with the API key masked |
 | `/quit` | Exit (Ctrl+D works too) |
 
