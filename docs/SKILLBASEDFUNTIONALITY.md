@@ -149,8 +149,7 @@ The shell is off by default. Add this to
 ```
 
 - `approval: "always"` shows every `pdftotext` and `grep` call and waits for a
-  `y`. Approving a shell command is full trust, so keep it on for untrusted
-  PDFs.
+  `y`. Approving a shell command is full trust.
 - The `.` root is the directory where you start basicagent. Write `report.txt`
   and `report.notes.md` there.
 - `pdftotext` can read a PDF outside the roots; `read_file` cannot read the
