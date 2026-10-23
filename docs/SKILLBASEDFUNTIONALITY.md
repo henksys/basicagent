@@ -11,7 +11,60 @@ The trade-off is manual work: you have to choose the right machine tool, write
 the skill, or let BasicAgent write it for you, and test it. In exchange, the existing file and shell tools can be
 combined in many ways.
 
-This guide uses one example: **asking questions about a PDF**. The agent
+Here is a skill.md file for media conversion that BasicAgent wrote itself when asked "write me a skill.md file for converting media":
+
+( make sure the "header" is also in the skill.md file, so the Name and Description.)
+
+
+```markdown
+---
+name: MediaConversion
+description: >
+  Use when the user asks questions about, converting media, converting video, extracting audio from movies, converting audio.
+---
+
+# Skill: Media Conversion
+
+This skill provides instructions for converting media files (audio and video) using `ffmpeg`.
+
+## Description
+Convert media files between different formats, resize videos, extract audio, and optimize files for various platforms.
+
+## Tools Required
+- `ffmpeg` (must be installed on the system)
+
+## Common Operations
+
+### 1. Convert Video Format
+Convert a video from one format to another (e.g., MKV to MP4).
+`ffmpeg -i input.mkv output.mp4`
+
+### 2. Extract Audio from Video
+Extract the audio track from a video file and save it as an MP3.
+`ffmpeg -i input.mp4 -vn -acodec libmp3lame -q:a 2 output.mp3`
+
+### 3. Resize/Scale Video
+Change the resolution of a video (e.g., to 720p).
+`ffmpeg -i input.mp4 -vf scale=1280:720 output_720p.mp4`
+
+### 4. Convert Audio Format
+Convert an audio file (e.g., WAV to MP3).
+`ffmpeg -i input.wav output.mp3`
+
+### 5. Compress Video
+Reduce file size by changing the Constant Rate Factor (CRF). Higher values mean more compression (usually 18-28 is a good range).
+`ffmpeg -i input.mp4 -vcodec libx264 -crf 23 output_compressed.mp4`
+
+## Verification
+After conversion, verify the result using:
+- `ffprobe output.mp4` to check metadata.
+- Checking the file size and playback.
+```
+
+
+
+
+For the next example with more complexity we use PDF's and manual RAG.: **asking questions about a PDF**. The agent
 extracts the text with `pdftotext`, searches it with `grep`, and reads the
 relevant lines with `read_file`.
 
@@ -234,8 +287,7 @@ follow-up, and it says when the manual does not contain the requested detail.
 - Scanned PDFs need OCR; `pdftotext` cannot read images.
 - Every `pdftotext` and `grep` call needs approval by default. That is the
   price of shell access.
-- Treat PDF text as untrusted data. Never follow instructions found inside a
-  document.
+
 
 ## Quick checklist
 
@@ -249,3 +301,4 @@ follow-up, and it says when the manual does not contain the requested detail.
 The same pattern works for other command-line tools, such as `jq` for JSON or
 `ffprobe` for media metadata. The skill tells the agent when and how to use
 them.
+
