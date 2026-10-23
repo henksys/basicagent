@@ -20,8 +20,11 @@ node bin/basicagent-setup.mjs     # or: npm run setup
 
 Every question shows a `[default]`; press Enter to accept it. The defaults
 come from your existing config file, or from `config.example.json` on a fresh
-install. For a local Ollama the whole setup is Enter-only. If you prefer to
-configure by hand, section 3 lists the provider recipes.
+install. For a local Ollama the whole setup is Enter-only. Read-only mode and
+its shell allowlist are not setup questions: a fresh config contains the
+defaults (read-only off), and an existing config can stay unchanged because the
+runtime supplies them. Edit them later under Settings → Advanced. If you prefer
+to configure by hand, section 3 lists the provider recipes.
 
 ## 2. Run it
 
@@ -231,9 +234,10 @@ basicagent
 ```
 
 ```
-basicagent 1.4.0
+basicagent 1.5.0
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
+readonly  off
 skills    basicagent, example, omarchy, ...
 basicagent> read package.json and tell me what scripts it defines
 ```
@@ -253,10 +257,11 @@ Commands:
 | `/new` | Start a new conversation session |
 | `/reload` | Re-read the config file, skills and provider (keeps history) |
 | `/skills` | List discovered skills |
-| `/tools` | List registered tools |
+| `/tools` | List registered tools available in the current mode |
 | `/model [name]` | Show or change the model for this session |
 | `/context` | Show the current context size, budget, message count and summary state |
 | `/compact` | Summarize older turns now |
+| `/readonly [on|off]` | Show or change read-only tool mode for this session |
 | `/config` | Show the resolved config with the API key masked |
 | `/quit` | Exit (Ctrl+D works too) |
 
@@ -286,11 +291,18 @@ too. The interface has three tabs:
   context gauge in the composer shows the whole-prompt token budget
   (`agent.contextTokens`): system prompt, tools, summary and messages. It is not
   the model's context window and unrelated to `provider.maxTokens`. Compaction
-  points appear in the transcript, with the summary available to inspect.
+  points appear in the transcript, with the summary available to inspect. The
+  composer also has a per-conversation **Read-only** toggle: file writes and
+  non-allowlisted shell commands are disabled, while read, web, skill and
+  memory tools remain available.
 - **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
-  agent limits, file roots, shell, web tool, skills, memory). Saving validates
-  the values, writes the file and live-reloads the running agent. The API key
-  is masked and never sent to the browser; leave the field empty to keep it.
+  agent limits, file roots, shell, web tool, skills, memory). The **Advanced**
+  card contains the read-only default, the shell allowlist for read-only mode,
+  and the tool-call breaker threshold. The read-only checkbox sets the default
+  for new conversations; a live conversation keeps its composer toggle. Saving
+  validates the values, writes the file and live-reloads the running agent.
+  The API key is masked and never sent to the browser; leave the field empty to
+  keep it.
 - **Memory** — the facts from `facts.jsonl` (view, add, delete), session
   transcripts and the audit log with filters.
 
@@ -314,6 +326,9 @@ echo "what files changed today?" | basicagent
 
 # Machine-readable events for scripts:
 basicagent --json "read README.md and return its first heading" | jq -c '.type'
+
+# Read-only tools: no file writes; only allowlisted shell commands:
+basicagent --read-only "summarize the logs with journalctl"
 ```
 
 `--json` emits one JSON object per line: `iteration`, `context`,
@@ -327,6 +342,9 @@ plus `approval_result` and `aborted`; there the `approval` event carries an
 
 One-shot mode never waits for approval. Actions that need approval are denied
 unless you pass `--yes` (only do that in trusted, non-interactive contexts).
+Read-only mode does not bypass approval: a whitelisted shell command still
+follows `tools.shell.approval`, so scripted use needs `approval: "never"` or
+`--yes`.
 
 ## 7. Skills
 
@@ -378,6 +396,7 @@ Then `/reload` in the REPL (or just start a new run). See
 
 ```json
 "tools": {
+  "readOnly": false,
   "files": {
     "roots": [
       { "path": ".",        "access": "rw" },
@@ -386,7 +405,20 @@ Then `/reload` in the REPL (or just start a new run). See
     ],
     "protectedPaths": ["~/.ssh"]
   },
-  "shell": { "enabled": false, "approval": "always" },
+  "shell": {
+    "enabled": false,
+    "approval": "always",
+    "readOnlyAllowlist": [
+      "journalctl",
+      "systemctl status",
+      "systemctl show",
+      "systemctl list-units",
+      "systemctl list-unit-files",
+      "systemctl is-active",
+      "systemctl is-enabled",
+      "date"
+    ]
+  },
   "web": {
     "enabled": true,
     "approval": "never",
@@ -408,6 +440,19 @@ Then `/reload` in the REPL (or just start a new run). See
 - `shell` is off by default. When enabled, every command is shown and needs a
   `y` in the REPL. Approving a command is full trust: a command can write
   anywhere, so allow it only if you accept that.
+- Read-only mode (`tools.readOnly`, default false) hides the file-writing tools
+  (`write_file`, `edit_file`, `append_file`, `rename_file`) and refuses them if
+  the model tries anyway. `read_file`, `list_dir`, `load_skill`, `fetch_url`
+  and the memory tools remain available. In read-only mode `run_command` is
+  limited to `tools.shell.readOnlyAllowlist`; an empty list means no shell
+  commands at all.
+  Entries are a command plus an optional required argv prefix, so
+  `"systemctl status"` allows `systemctl status nginx` but not
+  `systemctl restart nginx`. This is a user-controlled guardrail, not a sandbox:
+  allowed commands can still use flags that write (for example
+  `journalctl --vacuum-size` or `date -s` if the process has permission).
+- The tool-call loop breaker stops a turn after
+  `agent.toolCircuitBreaker.failureThreshold` identical failures (default 3).
 - `fetch_url` (web) is read-only and on by default. It refuses private and
   reserved network addresses (before and after redirects, including
   non-canonical IPv6, NAT64, 6to4 and Teredo forms) and the connection is
@@ -468,6 +513,8 @@ tab) and they appear in the system prompt of every run — see
 | `Tool arguments are not valid JSON` | Local model quirk. The error is returned to the model so it can retry; a stronger model usually fixes it. |
 | llama.cpp never calls tools | Start it with `--jinja`. |
 | `The run_command tool is disabled` | Set `tools.shell.enabled` to `true`. |
+| `Tool "..." is not available in read-only mode` | Read-only mode is active. Turn it off in the chat composer, with `/readonly off`, or with `--no-read-only`. |
+| `Command "..." is not in tools.shell.readOnlyAllowlist` | Add the command (or an argv prefix such as `systemctl status`) under Settings → Advanced, or turn read-only mode off. |
 | Approval denied in a script | One-shot denies approvals. Use `--yes`, or run the REPL. |
 | `Path is outside the configured file roots` | Add the directory to `tools.files.roots`, or run with `--cwd` inside an allowed root. |
 | Agent says it has no web tool | `fetch_url` was removed via `tools.web.enabled: false` or `--no-web`. |

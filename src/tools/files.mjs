@@ -130,6 +130,7 @@ export function fileTools({ config, cwd }) {
   return [
     {
       name: 'read_file',
+      allowedInReadOnly: true,
       description:
         'Read a UTF-8 text file. Output is line numbered ("   12| text"). ' +
         `Files larger than ${limits.maxReadBytes} bytes need start_line/end_line. ` +
@@ -164,6 +165,7 @@ export function fileTools({ config, cwd }) {
 
     {
       name: 'write_file',
+      allowedInReadOnly: false,
       description:
         'Write a complete UTF-8 file, creating parent directories as needed. ' +
         'Use for new files or explicitly requested full rewrites; for small changes prefer edit_file.',
@@ -186,6 +188,7 @@ export function fileTools({ config, cwd }) {
 
     {
       name: 'edit_file',
+      allowedInReadOnly: false,
       description:
         'Replace an exact text fragment in an existing file, preserving every other byte. ' +
         'old_string must match exactly (including whitespace and newlines). ' +
@@ -219,6 +222,7 @@ export function fileTools({ config, cwd }) {
 
     {
       name: 'append_file',
+      allowedInReadOnly: false,
       description:
         'Append text to the end of an EXISTING file without changing existing bytes. ' +
         'No newline is added automatically; include one in text when needed.',
@@ -241,6 +245,7 @@ export function fileTools({ config, cwd }) {
 
     {
       name: 'list_dir',
+      allowedInReadOnly: true,
       description: `List the entries of a directory (directories get a trailing "/"), newest first is not guaranteed. Limited to ${limits.maxListEntries} entries.`,
       parameters: {
         type: 'object',
@@ -265,6 +270,7 @@ export function fileTools({ config, cwd }) {
 
     {
       name: 'rename_file',
+      allowedInReadOnly: false,
       description: 'Rename or move a file within the allowed roots. Refuses to overwrite an existing destination or move between filesystems.',
       parameters: {
         type: 'object',

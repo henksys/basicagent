@@ -1,105 +1,46 @@
 # basicagent
 
-A small, dependency-free transparant (not a blackbox) command line agent. It runs an OpenAI-compatible model (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop with file tools, shell access, SKILL.md skills and persistent memory.
+A small, focused command line agent that runs an OpenAI-compatible model
+(Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop. It is fast
+by design: one-shot runs start instantly, the local web interface is a small
+hand-written app with no build step, and there is no framework between you and
+the provider.
 
-It can be used for scripted tasks, as a command line assistant, through the web interface, or even via voice with TTS/STT. However, voice-chatting is not included in this project and requires [SkyAgent](https://github.com/henksys/omarchy-skyagent), which is a separate plugin for Basicagent.
+basicagent stays lean by being skill-based. Capabilities are added with
+SKILL.md files rather than by growing an internal tool surface. You can write
+a SKILL.md yourself, ask the agent to write one for you, or use one that
+teaches it to drive a program already installed on the machine. The built-in
+toolset is deliberately small:
 
-Its tool-calling scope is deliberately small, which keeps it fast, transparent and safe. Can be used to study the basics, it has good documentation, and it can be easily expanded.
+- file reading, writing, editing, appending, listing and renaming
+- shell commands (off by default, approval-based)
+- web fetch with SSRF and domain protection
+- SKILL.md skills and persistent JSONL memory
 
-As a personal assistant it is basic by design, but one can teach/allow it to use the available machine's tools ( let it learn the programs by reading man pages or searching the web, and then ask it to write skills for something like pandoc or pdftotext or any other command-line program, and after that it can perform the tasks with those programs by using the skills it wrote).
+**Size:** the agent itself is about 7,500 lines of source (CLI, core and web
+interface). The test suite adds about 3,300 lines; together they are about
+10,800. Node.js 24+ built-ins are the only requirement: no external
+dependencies and no build step.
 
-So basically it grows more capable while using it. It can assist with for example systemd configuration/information and logs  and other settings, or write code/scripts.
-
-It also ships a local web interface (chat, settings, memory and audit log)
-Zero-dependency: Node 24+ built-ins only.
-
-
-
+Security is deliberately visible and configurable: tools can be enabled,
+disabled or scoped; read-only mode blocks file writes and limits shell commands;
+guarded actions ask for approval; web fetch is SSRF-protected; and every tool
+call is audited. A configurable circuit breaker stops repeated failing tool
+calls from looping.
 
 ## Requirements
 
 It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
 
-## Example
-
-```
-$ basicagent
-basicagent> add a timeout option to src/provider.mjs and run the tests
-[tool] read_file {"path":"src/provider.mjs"}
-[tool] edit_file {"path":"src/provider.mjs","old_string":"...","new_string":"..."}
-[tool] run_command {"command":"npm","args":["test"]}
-...
-Done: added provider.timeoutMs handling and all tests pass.
-```
-
 ## Features
 
-- **Any OpenAI-compatible provider** — local Ollama, Ollama Cloud, llama.cpp,
-  DeepSeek, OpenAI. Configure `baseUrl`, `model` and an API-key environment
-  variable.
-- **Agent loop with limits** — iteration cap, repeated-failure circuit breaker,
-  token-based context budget with automatic summarization of older turns, an
-  optional output-token cap, Ctrl+C abort.
-- **File tools** — read, write, edit, append, list, rename, with a
-  root-based access policy (`rw` / `ro` / `approval` / `deny`, most specific
-  root wins), symlink-safe path checks and protected paths (config file and
-  memory data directory included).
-- **Web fetch** — a zero-dependency `fetch_url` tool with SSRF protection
-  (private/reserved addresses blocked before and after redirects, including
-  non-canonical IPv6 forms; the connection is pinned to the validated
-  addresses), domain allow/deny lists, bounded HTML-to-text extraction, and no
-  cookies or JS. Disable it with `tools.web.enabled: false` or `--no-web`.
-- **Skills** — SKILL.md discovery with on-demand `load_skill` loading; the same
-  format used by Claude-style skill directories. Ships a bundled
-  [`basicagent` self-help skill](skills/basicagent/SKILL.md) that describes the
-  agent's own configuration, memory, guardrails and extension process.
-- **Persistent memory** — facts and conversation text in plain JSONL under
-  `$XDG_DATA_HOME/basicagent` (or `~/.local/share/basicagent`); set it per
-  agent with `memory.dir`, `BASICAGENT_DATA_DIR` or `--data-dir`; resume with
-  `--continue` or `--session`.
-- **Interactive and scriptable** — REPL for conversation, one-shot mode for
-  automation, `--json` event stream for embedding.
-- **Guided setup** — `basicagent-setup` asks for the provider, model, API key,
-  shell access and the config/data directories, tests the connection and can
-  start the web interface when done. Enter accepts the defaults from
-  `config.example.json` or your existing config.
-- **Local web interface** — `basicagent-web` serves a browser UI on
-  `127.0.0.1` (chat with live streaming and inline approvals, a settings
-  editor for the config file, and browsable facts, sessions and the audit
-  log). Token-protected, loopback-only by default, no framework and no build
-  step; it opens in your default browser on startup.
-- **Guardrails you can see** — approval prompts, an append-only
-  `audit.jsonl`, bounded outputs and a shell tool that is off by default.
-- **Zero dependencies** — Node 24+ built-ins only.
-
-## Context budget
-
-`agent.contextTokens` (default `24000`) is the size of the prompt basicagent
-is willing to send: system prompt, skills, saved facts, tool definitions, the
-conversation summary and the messages. It is counted in tokens, not
-characters.
-
-The budget is **not** the model's context window. A provider may accept 128k
-or 256k tokens, but every request resends the whole prompt, so a larger working
-set costs more, takes longer before the first token, and makes it harder for
-the model to stay focused. Keep the budget comfortably below the window and
-leave room for the answer. Typical values: 8k window → 6k budget, 32k → 16k–24k,
-128k+ → 32k–64k. The default `24000` assumes a served window of at least ~32k;
-for an 8k local model, lower it to `6000`. Ollama's `num_ctx` setting can be
-lower than the model card, so check what the server actually serves.
-
-When the budget fills, older turns are summarized and a compaction notice
-appears in the CLI or Web UI. Recent turns stay verbatim, and the summary is
-stored with the session and replayed on `--continue`. Set
-`agent.compact: "off"` to drop old turns instead of summarizing them;
-`agent.compactAt` (default `0.8`) controls when summarization starts.
-`agent.maxResultChars` is a separate per-tool-result cap, not the context
-budget.
-
-Before 1.4.0 the budget was `agent.contextChars`. It has been replaced:
-a config that still contains it is rejected at startup with a conversion hint
-(`100000` characters was roughly `25000` tokens). Running
-`basicagent-setup` on an existing config migrates the value automatically.
+- **OpenAI-compatible providers** — Ollama, Ollama Cloud, llama.cpp, DeepSeek, OpenAI.
+- **Interactive and scriptable** — REPL, instant one-shot runs, JSON-lines output, and a fast local web interface.
+- **Lean, skill-based toolset** — file tools, shell, web fetch, SKILL.md skills and persistent JSONL memory.
+- **Configurable safety** — file-root policies, approval prompts, read-only tool mode with a shell allowlist, SSRF protection and an audit log.
+- **Loop protection** — iteration limits and a configurable circuit breaker for repeated identical tool failures.
+- **Guided setup** — writes the config, tests the provider and can start the web UI.
+- **Zero dependencies** — Node.js 24+ built-ins only, no build step.
 
 ## Quick start
 
@@ -141,11 +82,15 @@ The UI has three tabs:
   confirmation. Stop cancels the running turn; closing the tab aborts it. A
   context gauge shows how full the whole-prompt token budget
   (`agent.contextTokens`) is — not the model's context window. Compaction
-  points appear in the transcript with the summary available to inspect.
+  points appear in the transcript with the summary available to inspect. A
+  per-conversation **Read-only** toggle sits in the composer.
 - **Settings** — edits the same `config.json` the CLI reads (provider, agent
-  limits, file roots, shell, web tool, skills, memory). Saving validates the
+  limits, file roots, shell, web tool, skills, memory) plus an Advanced section
+  for read-only mode and the tool-breaker threshold. Saving validates the
   result, writes the file atomically and live-reloads the agent. The API key
-  is never sent to the browser; leave the field empty to keep it.
+  is never sent to the browser; leave the field empty to keep it. The chat
+  window also has a per-conversation **Read-only** toggle; the Settings
+  checkbox supplies the default for new conversations.
 - **Memory** — facts (add/delete), session transcripts and the audit log,
   all straight from the JSONL files.
 
@@ -177,10 +122,16 @@ basicagent [options] [prompt]
   --session <id>    use a named session
   --ephemeral       disable memory for this run
   --no-web          disable the fetch_url web tool for this run
+  --read-only       only allow read-only tool calls (no file writes; shell
+                    commands must match tools.shell.readOnlyAllowlist)
+  --no-read-only    disable read-only tool mode for this run
   --json            JSON-lines event output (for scripts)
   --no-color        disable ANSI colors in terminal output
   --yes             auto-approve guarded actions without asking (dangerous)
 ```
+
+REPL commands: `/help /new /reload /skills /tools /model [name] /context
+/compact /readonly [on|off] /config /quit`.
 
 The web server is a separate command:
 

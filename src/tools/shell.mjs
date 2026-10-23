@@ -9,6 +9,8 @@
 //     meaning, so "rm -rf /" style accidents cannot hide inside a pipeline.
 //   - The working directory must itself pass the file-root policy.
 //   - Every call needs approval unless the config sets approval: "never".
+//   - In read-only mode, only commands matching tools.shell.readOnlyAllowlist
+//     run. The allowlist is a guardrail, not a sandbox.
 //   - A simple denylist backstop refuses obviously destructive commands. It is
 //     an accident brake, not a sandbox.
 //   - Hard timeout, kill on timeout or cancellation, output caps.
@@ -22,16 +24,38 @@ import { stat } from 'node:fs/promises';
 import { bounded } from '../util.mjs';
 import { checkAccess } from './files.mjs';
 
+// Does `command args` match one of the read-only allowlist entries? Each entry
+// is a command plus an optional required argv prefix: "journalctl" matches any
+// journalctl call, "systemctl status" requires "status" as the first argument.
+export function matchReadOnlyCommand(allowlist, command, args) {
+  for (const entry of allowlist) {
+    const [allowedCommand, ...prefix] = entry.split(' ');
+    if (allowedCommand !== command) continue;
+    if (prefix.length > args.length) continue;
+    if (prefix.every((value, index) => args[index] === value)) return true;
+  }
+  return false;
+}
+
 export function shellTools({ config, cwd }) {
   const settings = config.tools.shell;
+  const readOnlyAllowlist = settings.readOnlyAllowlist ?? [];
+  const readOnlyAvailable = Boolean(settings.enabled && readOnlyAllowlist.length > 0);
+  const readOnlyNote = !settings.enabled
+    ? 'In read-only mode this tool is unavailable because shell access is disabled. '
+    : readOnlyAllowlist.length > 0
+      ? `In read-only mode only commands matching tools.shell.readOnlyAllowlist are permitted. Allowed: ${readOnlyAllowlist.join(', ')}. `
+      : 'In read-only mode this tool is unavailable because tools.shell.readOnlyAllowlist is empty. ';
 
   return [
     {
       name: 'run_command',
+      allowedInReadOnly: readOnlyAvailable,
       description:
         (settings.enabled
           ? 'Run a local executable with literal arguments (no shell). Every call is shown and needs approval. '
           : 'EXECUTABLE DISABLED: the run_command tool is turned off in the config. Tell the user to enable tools.shell.enabled. ') +
+        readOnlyNote +
         'Use file tools for file operations. Returns exitCode, stdout and stderr.',
       parameters: {
         type: 'object',
@@ -51,6 +75,20 @@ export function shellTools({ config, cwd }) {
         if (!/^[A-Za-z0-9_./+-]+$/.test(command)) throw new Error('Command must be a plain executable name or path (no shell syntax)');
         if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('args must be an array of strings without NUL bytes');
 
+        const line = [command, ...args].join(' ').replace(/\s+/g, ' ').trim();
+
+        // Read-only mode is an authorization filter in front of approval. An
+        // empty allowlist means the tool should not have been offered at all.
+        if (ctx?.readOnly) {
+          const allowlist = settings.readOnlyAllowlist ?? [];
+          if (allowlist.length === 0) {
+            throw new Error('The run_command tool is unavailable in read-only mode because tools.shell.readOnlyAllowlist is empty.');
+          }
+          if (!matchReadOnlyCommand(allowlist, command, args)) {
+            throw new Error(`Command "${line}" is not in tools.shell.readOnlyAllowlist; read-only mode refused it`);
+          }
+        }
+
         let workdir = cwd;
         if (requestedCwd !== undefined) {
           const check = await checkAccess({ config, cwd, input: requestedCwd });
@@ -61,7 +99,6 @@ export function shellTools({ config, cwd }) {
 
         // Collapse whitespace so extra spaces cannot slip a denied word past
         // the comparison. Still an accident brake, not a sandbox.
-        const line = [command, ...args].join(' ').replace(/\s+/g, ' ').trim();
         const lower = line.toLowerCase();
         for (const denied of settings.denylist) {
           if (lower.includes(String(denied).toLowerCase().replace(/\s+/g, ' ').trim())) {

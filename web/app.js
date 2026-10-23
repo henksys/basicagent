@@ -167,7 +167,7 @@
 
   // ===== Chat =================================================================
 
-  const chat = { sessionId: null, busy: false, assistantEl: null, pendingTools: [], contextTokens: null };
+  const chat = { sessionId: null, busy: false, readOnly: false, assistantEl: null, pendingTools: [], contextTokens: null };
 
   // Compact token count for the context gauge (999, 1.5k, 25k).
   function formatTokens(value) {
@@ -407,6 +407,7 @@
     $('#stop').hidden = !chat.busy;
     $('#send').disabled = chat.busy;
     $('#prompt').disabled = chat.busy;
+    $('#readonly-toggle').disabled = chat.busy || !chat.sessionId;
     if (chat.busy) $('#prompt').blur();
     else $('#prompt').focus();
   }
@@ -451,16 +452,18 @@
 
   async function newSession() {
     const data = await api('/api/sessions', { method: 'POST', body: {} });
-    activateSession(data.id, data.messages, data.contextTokens ?? 0);
+    activateSession(data.id, data.messages, data.contextTokens ?? 0, data.readOnly);
   }
 
   async function openSession(id) {
     const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    activateSession(data.id, data.messages, data.contextTokens ?? 0);
+    activateSession(data.id, data.messages, data.contextTokens ?? 0, data.readOnly);
   }
 
-  function activateSession(id, messages, contextTokens = 0) {
+  function activateSession(id, messages, contextTokens = 0, readOnly = false) {
     chat.sessionId = id;
+    chat.readOnly = Boolean(readOnly);
+    $('#readonly-toggle').checked = chat.readOnly;
     $('#messages').textContent = '';
     chat.assistantEl = null;
     chat.pendingTools = [];
@@ -473,8 +476,11 @@
         else addMessage(message.role, message.content);
       }
     } else {
-      addNotice('New conversation. Ask basicagent anything — it can read and write files and use skills.');
+      addNotice(chat.readOnly
+        ? 'New conversation. Read-only mode is enabled: file writing and non-allowlisted shell commands are unavailable.'
+        : 'New conversation. Ask basicagent anything — it can read and write files and use skills.');
     }
+    updateBusyUI();
     loadSessionList().catch(() => {});
   }
 
@@ -517,6 +523,38 @@
 
   $('#stop').addEventListener('click', () => {
     api('/api/chat/abort', { method: 'POST', body: { sessionId: chat.sessionId } }).catch(() => {});
+  });
+
+  $('#readonly-toggle').addEventListener('change', async (event) => {
+    const enabled = event.target.checked;
+    if (chat.busy) {
+      event.target.checked = chat.readOnly;
+      return;
+    }
+    if (!chat.sessionId) {
+      event.target.checked = chat.readOnly;
+      return;
+    }
+    try {
+      const data = await api(`/api/sessions/${encodeURIComponent(chat.sessionId)}/read-only`, {
+        method: 'POST',
+        body: { enabled }
+      });
+      chat.readOnly = Boolean(data.readOnly);
+      event.target.checked = chat.readOnly;
+      if (typeof data.contextTokens === 'number') {
+        chat.contextTokens = data.contextTokens;
+        renderContextGauge();
+      }
+      addNotice(chat.readOnly
+        ? 'Read-only mode enabled: file writes and non-allowlisted shell commands are disabled. Memory tools remain available.'
+        : 'Read-only mode disabled: file and shell tools are available again.',
+      chat.readOnly ? 'warn' : '');
+      showToast(chat.readOnly ? 'Read-only mode enabled.' : 'Read-only mode disabled.', 'ok');
+    } catch (error) {
+      event.target.checked = chat.readOnly;
+      addNotice(`error: ${error.message}`, 'error');
+    }
   });
 
   $('#new-session').addEventListener('click', () => {
@@ -632,11 +670,24 @@
         continue;
       }
       const value = getByPath(raw, path);
-      input.value = value === undefined || value === null ? '' : String(value);
+      if (value === undefined || value === null) {
+        input.value = input.dataset.effectiveDefault === 'true'
+          ? String(getByPath(effective, path) ?? '')
+          : '';
+      } else {
+        input.value = String(value);
+      }
     }
     for (const textarea of $$('[data-config-list]')) {
       const value = getByPath(raw, textarea.dataset.configList);
-      textarea.value = Array.isArray(value) ? value.join('\n') : '';
+      if (Array.isArray(value)) {
+        textarea.value = value.join('\n');
+      } else if (textarea.dataset.effectiveList === 'true') {
+        const effectiveValue = getByPath(effective, textarea.dataset.configList);
+        textarea.value = Array.isArray(effectiveValue) ? effectiveValue.join('\n') : '';
+      } else {
+        textarea.value = '';
+      }
     }
     renderRoots(raw.tools?.files?.roots);
     $('#raw-config').value = JSON.stringify(raw, null, 2);
@@ -671,9 +722,19 @@
     }
     for (const textarea of $$('[data-config-list]')) {
       const path = textarea.dataset.configList;
-      const lines = textarea.value.split('\n').map((line) => line.trim()).filter(Boolean);
-      if (lines.length === 0) deleteByPath(raw, path);
-      else setByPath(raw, path, lines);
+      const lines = textarea.value
+        .split('\n')
+        .map((line) => line.trim())
+        .map((line) => (textarea.dataset.normalizeWhitespace === 'true' ? line.replace(/\s+/g, ' ') : line))
+        .filter(Boolean);
+      if (lines.length === 0) {
+        // Some lists (the read-only shell allowlist) need an explicit empty
+        // array; deleting the key would fall back to the default list.
+        if (textarea.dataset.emptyArray === 'true') setByPath(raw, path, []);
+        else deleteByPath(raw, path);
+      } else {
+        setByPath(raw, path, lines);
+      }
     }
     const roots = [];
     for (const row of $$('#roots-list .root-row')) {

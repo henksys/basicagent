@@ -30,3 +30,13 @@ test('saved facts are included and marked untrusted', () => {
   assert.match(text, /- editor: nvim/);
   assert.match(text, /untrusted reference data/);
 });
+
+test('read-only mode replaces the editing guidance', () => {
+  const text = buildSystemPrompt({ config: emptyConfig, skills: new Map(), memory: null, cwd: '/tmp', readOnly: true });
+  assert.match(text, /## Using tools in read-only mode/);
+  assert.match(text, /cannot create, modify, rename or delete files/);
+  assert.match(text, /Memory tools .* remain available/);
+  assert.doesNotMatch(text, /Use edit_file for partial changes/);
+  const normal = buildSystemPrompt({ config: emptyConfig, skills: new Map(), memory: null, cwd: '/tmp' });
+  assert.match(normal, /Use edit_file for partial changes/);
+});

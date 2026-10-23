@@ -41,13 +41,19 @@ Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
   system prompt, tools, summary and messages — not the model's context window),
   `compact` (`summarize` or `off`), `compactAt` (fraction of the budget at
   which older turns are summarized), `maxResultChars` (cap for one tool
-  result), `systemPrompt` / `systemPromptFile` (use these to rename/re-persona
-  yourself; the default persona is in `persona-example.md`). The pre-1.4
-  `contextChars` key is rejected; `basicagent-setup` migrates it.
+  result), `toolCircuitBreaker.failureThreshold` (identical tool-call failures
+  before the turn stops; default 3), `systemPrompt` / `systemPromptFile` (use
+  these to rename/re-persona yourself; the default persona is in
+  `persona-example.md`). The pre-1.4 `contextChars` key is rejected;
+  `basicagent-setup` migrates it.
 - `tools.files`: `roots` (`{path, access}` with `rw` / `ro` / `approval` /
   `deny`), `protectedPaths`, size caps.
+- `tools.readOnly`: `true` hides the file-writing tools and refuses them;
+  `read_file`, `list_dir`, `fetch_url`, skills and memory tools stay available.
+  A shell command must then match `tools.shell.readOnlyAllowlist`.
 - `tools.shell`: `enabled` (default false), `approval` (`always` / `never`),
-  `timeoutMs`, `maxOutputBytes`, `denylist`.
+  `timeoutMs`, `maxOutputBytes`, `denylist`, `readOnlyAllowlist` (command plus
+  optional required argv prefix, e.g. `journalctl` or `systemctl status`).
 - `tools.web`: `fetch_url` settings — `enabled` (default true), `approval`
   (`never` / `always`), `timeoutMs`, `maxBytes`, `maxRedirects`,
   `allowPrivate` (default false), `denyDomains`, `allowDomains`, `userAgent`.
@@ -66,6 +72,12 @@ Precedence: defaults < config file < environment < CLI flags.
 - `run_command` is off by default. When enabled, every call is shown and needs
   approval; approving a command is full trust, because a command can write
   anywhere.
+- Read-only mode (`tools.readOnly`) hides `write_file`, `edit_file`,
+  `append_file` and `rename_file`, and rejects them if called anyway. In that
+  mode `run_command` only accepts commands matching
+  `tools.shell.readOnlyAllowlist`; an empty list means no shell commands. The
+  allowlist is a guardrail, not a sandbox: allowed commands can still have
+  writing flags. Memory tools remain available.
 - `fetch_url` is read-only and enabled by default: it refuses private or
   reserved network addresses (including after redirects and non-canonical IPv6
   forms) and pins the connection to the validated addresses. It always treats
@@ -116,9 +128,11 @@ can start the web interface). Scripting:
 `tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
 streams the same events plus `approval_result` and `aborted`; there the
 `approval` event carries an `id` answered with `POST /api/approvals/:id`.
-Handy flags: `--no-web` (disable web fetch for one run), `--no-color`
-(disable ANSI colors), `--continue`, `--session <id>`, `--ephemeral`. REPL
-commands: `/help /new /reload /skills /tools /model [name] /config /quit`.
+Handy flags: `--no-web` (disable web fetch for one run), `--read-only`
+(no file writes; shell limited to the allowlist), `--no-read-only` (override a
+config default), `--no-color` (disable ANSI colors), `--continue`,
+`--session <id>`, `--ephemeral`. REPL commands: `/help /new /reload /skills
+/tools /model [name] /context /compact /readonly [on|off] /config /quit`.
 
 ## Skills
 
@@ -129,6 +143,7 @@ through `load_skill`. This bundled skill lives in the project's
 
 ## Tests
 
-`npm test` is offline (fake provider; 128 tests including the web server).
+`npm test` is offline (fake provider and fake web servers; includes the web
+server, read-only tool policy and shell allowlist tests).
 `npm run test:live` is an opt-in Ollama Cloud integration test and needs
 `OLLAMA_API_KEY_CLOUD` (model `gemma4:31b`).

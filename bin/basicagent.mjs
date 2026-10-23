@@ -10,7 +10,7 @@
 //   echo "prompt" | basicagent     read the prompt from stdin
 //
 // The REPL supports: /help /new /reload /skills /tools /model /context
-//                     /compact /config /quit
+//                     /compact /readonly /config /quit
 //
 // One-shot mode denies approval-required actions unless --yes is given, so
 // scripts never hang on a prompt. The REPL asks interactively; --yes there
@@ -51,6 +51,9 @@ Options:
   --session <id>     Use (or create) a named conversation session
   --ephemeral        Disable memory for this run
   --no-web           Disable the fetch_url web tool for this run
+  --read-only        Only allow read-only tool calls (no file writes; shell
+                     commands must match tools.shell.readOnlyAllowlist)
+  --no-read-only     Disable read-only tool mode for this run, overriding config
   --no-color         Disable ANSI colors in terminal output
   --json             One-shot JSON-lines event output (for scripts)
   --yes              Auto-approve guarded actions without asking (dangerous,
@@ -60,7 +63,7 @@ Options:
 
 REPL commands:
   /help /new /reload /skills /tools /model [name] /context /compact
-  /config /quit
+  /readonly [on|off] /config /quit
 
 Settings come from, in order: built-in defaults, the config file,
 BASICAGENT_API_KEY/BASICAGENT_BASE_URL/BASICAGENT_MODEL/BASICAGENT_DATA_DIR,
@@ -84,6 +87,8 @@ function parseFlags(argv) {
       yes: { type: 'boolean' },
       ephemeral: { type: 'boolean' },
       'no-web': { type: 'boolean' },
+      'read-only': { type: 'boolean' },
+      'no-read-only': { type: 'boolean' },
       'no-color': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' }
@@ -120,6 +125,10 @@ async function main() {
     process.stdout.write(`${VERSION}\n`);
     return;
   }
+  if (values['read-only'] && values['no-read-only']) {
+    process.stderr.write('error: --read-only and --no-read-only cannot be used together\n');
+    process.exit(2);
+  }
 
   const cwd = values.cwd ? resolve(values.cwd) : process.cwd();
   // parseArgs keeps kebab-case names; config expects camelCase flag names.
@@ -130,7 +139,8 @@ async function main() {
     model: values.model,
     baseUrl: values['base-url'],
     apiKey: values['api-key'],
-    noWeb: values['no-web']
+    noWeb: values['no-web'],
+    readOnly: values['read-only'] ? true : values['no-read-only'] ? false : undefined
   };
   let config;
   try {
@@ -139,6 +149,8 @@ async function main() {
     process.stderr.write(`error: ${error.message}\n`);
     process.exit(2);
   }
+  let readOnly = Boolean(config.tools.readOnly);
+  let readOnlyOverride = null;
 
   const ui = createUI({ json: values.json, color: !values['no-color'] });
   const memory = config.memory.enabled && !values.ephemeral ? new Memory({ dir: config.memory.dir }) : null;
@@ -232,12 +244,13 @@ async function main() {
     provider = new Provider(config);
     registry = createRegistry({ config, memory, skills, cwd, onAuditError: (text) => ui.warn(text) });
     agent = new Agent({ provider, registry, config, emit: onEvent, approve });
+    agent.setReadOnly(readOnly);
     agent.messages = history;
     agent.summary = summary;
   }
 
   function refreshSystemPrompt() {
-    agent.setSystem(buildSystemPrompt({ config, skills, memory, cwd }));
+    agent.setSystem(buildSystemPrompt({ config, skills, memory, cwd, readOnly }));
   }
 
   async function runTurn(input, signal) {
@@ -288,6 +301,7 @@ async function main() {
   ui.banner(`basicagent ${VERSION}`);
   ui.banner(`model     ${provider.model} @ ${config.provider.baseUrl}`);
   ui.banner(`cwd       ${cwd}`);
+  ui.banner(`readonly  ${readOnly ? 'on' : 'off'}`);
   ui.banner(`skills    ${skills.size ? [...skills.keys()].join(', ') : '(none)'}`);
   if (memory?.sessionId) ui.banner(`session   ${memory.sessionId}`);
   if (history.length) ui.banner(`resumed   ${history.length} messages from the previous session`);
@@ -302,7 +316,7 @@ async function main() {
     const argument = rest.join(' ').trim();
     switch (name) {
       case 'help':
-        ui.banner('Commands: /new /reload /skills /tools /model [name] /context /compact /config /quit');
+        ui.banner('Commands: /new /reload /skills /tools /model [name] /context /compact /readonly [on|off] /config /quit');
         break;
       case 'quit':
       case 'exit':
@@ -323,11 +337,12 @@ async function main() {
           ui.error(`Reload failed: ${error.message}`);
           break;
         }
+        readOnly = readOnlyOverride ?? Boolean(config.tools.readOnly);
         build();
         agent.messages = messages;
         agent.summary = keptSummary;
         refreshSystemPrompt();
-        ui.info(`Reloaded: model ${provider.model}, ${skills.size} skills, ${registry.names().length} tools.`);
+        ui.info(`Reloaded: model ${provider.model}, ${skills.size} skills, ${registry.names({ readOnly }).length} tools, read-only ${readOnly ? 'on' : 'off'}.`);
         break;
       }
       case 'skills':
@@ -335,8 +350,25 @@ async function main() {
         for (const skill of skills.values()) ui.info(`- ${skill.name}: ${skill.description}`);
         break;
       case 'tools':
-        ui.info(registry.names().join(', '));
+        ui.info(registry.names({ readOnly }).join(', '));
         break;
+      case 'readonly': {
+        const value = argument.toLowerCase();
+        if (!value) {
+          ui.info(`read-only mode: ${readOnly ? 'on' : 'off'}`);
+          break;
+        }
+        if (value !== 'on' && value !== 'off') {
+          ui.warn('Use /readonly on or /readonly off.');
+          break;
+        }
+        readOnly = value === 'on';
+        readOnlyOverride = readOnly;
+        agent.setReadOnly(readOnly);
+        refreshSystemPrompt();
+        ui.info(`Read-only mode ${readOnly ? 'enabled' : 'disabled'}.`);
+        break;
+      }
       case 'model':
         if (argument) {
           provider.model = argument;

@@ -20,6 +20,10 @@ test('defaults load when no config file exists', () => {
     assert.equal(config.agent.contextTokens, 24000, 'whole-prompt token budget');
     assert.equal(config.agent.compact, 'summarize');
     assert.equal(config.agent.compactAt, 0.8);
+    assert.equal(config.agent.toolCircuitBreaker.failureThreshold, 3);
+    assert.equal(config.tools.readOnly, false, 'read-only mode is off by default');
+    assert.ok(config.tools.shell.readOnlyAllowlist.includes('date'));
+    assert.ok(config.tools.shell.readOnlyAllowlist.includes('systemctl status'));
     assert.equal(config.tools.files.roots.length, 1);
     assert.equal(config.tools.files.roots[0].path, dir);
     assert.equal(config.paths.configFound, false);
@@ -104,6 +108,16 @@ test('invalid values are rejected with clear errors', () => {
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /compactAt/);
     writeFileSync(configPath, JSON.stringify({ provider: { maxTokens: 0 } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /maxTokens/);
+    writeFileSync(configPath, JSON.stringify({ agent: { toolCircuitBreaker: { failureThreshold: 0 } } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /toolCircuitBreaker/);
+    writeFileSync(configPath, JSON.stringify({ tools: { readOnly: 'yes' } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /tools\.readOnly/);
+    writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: 'date' } } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /readOnlyAllowlist/);
+    writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: [''] } } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /readOnlyAllowlist/);
+    writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: ['bad;command'] } } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /readOnlyAllowlist/);
     writeFileSync(configPath, 'not json');
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /not valid JSON/);
   } finally {
@@ -225,6 +239,41 @@ test('the noWeb flag disables the web tool for one run', () => {
     writeFileSync(configPath, JSON.stringify({ tools: { web: { enabled: true } } }));
     const config = loadConfig({ flags: { config: configPath, noWeb: true }, env: {}, cwd: dir });
     assert.equal(config.tools.web.enabled, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the readOnly flag overrides the config in both directions', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ tools: { readOnly: true } }));
+    const on = loadConfig({ flags: { config: configPath }, env: {}, cwd: dir });
+    assert.equal(on.tools.readOnly, true);
+
+    const off = loadConfig({ flags: { config: configPath, readOnly: false }, env: {}, cwd: dir });
+    assert.equal(off.tools.readOnly, false);
+
+    writeFileSync(configPath, JSON.stringify({ tools: { readOnly: false } }));
+    const forced = loadConfig({ flags: { config: configPath, readOnly: true }, env: {}, cwd: dir });
+    assert.equal(forced.tools.readOnly, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the read-only allowlist is normalized and an explicit empty list survives', () => {
+  const dir = tempDir();
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: ['  systemctl   status ', 'date'] } } }));
+    let config = loadConfig({ flags: { config: configPath }, env: {}, cwd: dir });
+    assert.deepEqual(config.tools.shell.readOnlyAllowlist, ['systemctl status', 'date']);
+
+    writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: [] } } }));
+    config = loadConfig({ flags: { config: configPath }, env: {}, cwd: dir });
+    assert.deepEqual(config.tools.shell.readOnlyAllowlist, [], 'empty means no shell commands in read-only mode');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

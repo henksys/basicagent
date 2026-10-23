@@ -11,6 +11,7 @@
 //   GET    /api/sessions            list stored conversations
 //   POST   /api/sessions            start (or resume) a conversation
 //   GET    /api/sessions/:id        one transcript with timestamps
+//   POST   /api/sessions/:id/read-only  change the conversation's read-only mode
 //   DELETE /api/sessions/:id        remove one stored conversation
 //   GET    /api/facts               list saved facts
 //   PUT    /api/facts               add/update a fact {key, value}
@@ -134,6 +135,7 @@ export function createApi({ state, manager, version }) {
       contextTokens: config.agent.contextTokens,
       compact: config.agent.compact,
       compactAt: config.agent.compactAt,
+      readOnly: config.tools.readOnly,
       memoryEnabled: config.memory.enabled,
       dataDir: dir,
       configPath: config.paths.configPath,
@@ -231,6 +233,7 @@ export function createApi({ state, manager, version }) {
     const dir = memoryDir();
     sendJSON(res, 200, {
       id: session.sessionId,
+      readOnly: session.readOnly,
       messages: dir ? readSessionEvents(dir, session.sessionId) : [],
       contextTokens: session.contextTokens()
     });
@@ -251,6 +254,7 @@ export function createApi({ state, manager, version }) {
     // use (system prompt + tool schemas + summary) so the gauge is comparable
     // before the session becomes live.
     const live = manager.sessions.get(id);
+    const readOnly = live ? live.readOnly : Boolean(state.config.tools.readOnly);
     let contextTokens;
     if (live) {
       contextTokens = live.contextTokens();
@@ -267,7 +271,8 @@ export function createApi({ state, manager, version }) {
         config: state.config,
         skills,
         memory: manager.factStore,
-        cwd: state.cwd
+        cwd: state.cwd,
+        readOnly
       });
       const registry = createRegistry({
         config: state.config,
@@ -278,11 +283,36 @@ export function createApi({ state, manager, version }) {
       contextTokens = estimatePromptTokens({
         system,
         summary,
-        tools: registry.schemas(),
+        tools: registry.schemas({ readOnly }),
         messages: plain
       });
     }
-    sendJSON(res, 200, { id, messages, contextTokens });
+    sendJSON(res, 200, { id, readOnly, messages, contextTokens });
+  }
+
+  async function sessionReadOnly(req, res, path) {
+    const match = /^\/api\/sessions\/([^/]+)\/read-only$/.exec(path);
+    if (!match) return sendJSON(res, 404, { error: 'Unknown session' });
+    let id;
+    try {
+      id = decodeURIComponent(match[1]);
+    } catch {
+      return badRequest(res, 'Invalid session id');
+    }
+    const body = await readJSON(req);
+    if (typeof body.enabled !== 'boolean') return badRequest(res, 'enabled must be a boolean');
+    let session;
+    try {
+      session = manager.get(id);
+    } catch {
+      return badRequest(res, 'Invalid session id');
+    }
+    try {
+      sendJSON(res, 200, session.setReadOnly(body.enabled));
+    } catch (error) {
+      if (error.status === 409) return sendJSON(res, 409, { error: error.message });
+      return sendJSON(res, error.status ?? 500, { error: error.message || String(error) });
+    }
   }
 
   function sessionDelete(res, path) {
@@ -440,6 +470,10 @@ export function createApi({ state, manager, version }) {
       }
       if (path === '/api/sessions' && method === 'POST') {
         await sessionStart(req, res);
+        return true;
+      }
+      if (path.startsWith('/api/sessions/') && path.endsWith('/read-only') && method === 'POST') {
+        await sessionReadOnly(req, res, path);
         return true;
       }
       if (path.startsWith('/api/sessions/') && method === 'GET') {

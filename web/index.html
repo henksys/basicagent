@@ -96,6 +96,10 @@
             <label class="sr-only" for="prompt">Message</label>
             <textarea id="prompt" rows="3" placeholder="Ask basicagent… (Enter to send, Shift+Enter for a newline)"></textarea>
             <div class="composer-actions">
+              <label class="readonly-toggle" title="Read-only tool mode: file writes and non-allowlisted shell commands are disabled. Memory tools remain available.">
+                <input type="checkbox" id="readonly-toggle" disabled>
+                <span>Read-only</span>
+              </label>
               <span class="context-gauge" id="context-gauge" hidden></span>
               <span class="composer-hint" id="composer-hint"></span>
               <button class="btn btn-primary" id="send" type="submit">Send</button>
@@ -322,6 +326,34 @@
               <label class="form-field span-2">
                 <span>Data directory</span>
                 <input data-config="memory.dir" placeholder="~/.local/share/basicagent">
+              </label>
+            </div>
+          </section>
+
+          <section class="card panel">
+            <div class="panel-head"><h2>Advanced</h2></div>
+            <div class="panel-body form-grid">
+              <h3 class="panel-sub span-2">Read-only mode</h3>
+              <p class="form-note span-2">
+                Read-only mode hides file-writing tools and limits shell commands to the allowlist below.
+                Web and memory tools remain available. The allowlist is a user-controlled guardrail,
+                not a sandbox.
+              </p>
+              <label class="form-field checkbox-field span-2">
+                <input data-config="tools.readOnly" type="checkbox">
+                <span>Enable read-only tool calling by default</span>
+              </label>
+              <label class="form-field span-2">
+                <span>Shell allowlist in read-only mode <span class="form-hint">(one command or argv prefix per line; empty = no shell commands)</span></span>
+                <textarea data-config-list="tools.shell.readOnlyAllowlist" data-effective-list="true" data-empty-array="true" data-normalize-whitespace="true" rows="8" placeholder="one command or argv prefix per line"></textarea>
+              </label>
+              <h3 class="panel-sub span-2">Circuit breaker</h3>
+              <p class="form-note span-2">
+                The tool loop stops when the same tool call fails repeatedly within one turn.
+              </p>
+              <label class="form-field">
+                <span>Identical tool failures before stopping <span class="form-hint">(default: 3)</span></span>
+                <input data-config="agent.toolCircuitBreaker.failureThreshold" data-number="true" data-effective-default="true" inputmode="numeric" placeholder="3">
               </label>
             </div>
           </section>

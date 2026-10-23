@@ -36,6 +36,7 @@ export function webTools({ config }) {
   return [
     {
       name: 'fetch_url',
+      allowedInReadOnly: true,
       description:
         'Fetch a public http(s) URL and return its readable text (HTML is converted to plain text, scripts and styles removed). ' +
         'Use when the user gives a URL or asks about current web content. ' +

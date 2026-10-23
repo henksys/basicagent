@@ -10,6 +10,10 @@
 // wrong types are rejected with an error the model can read and correct,
 // which keeps weak local models from silently doing the wrong thing.
 //
+// Read-only mode is enforced here: schemas({ readOnly: true }) omits tools
+// whose allowedInReadOnly is not true, and execute() refuses them even if a
+// model calls one from conversation history.
+//
 // Every executed call is appended to audit.jsonl in the data directory:
 //   { ts, tool, args (bounded), ok, error, durationMs, approvals }
 // Approval requests made during the call are recorded with their answer, and
@@ -101,22 +105,30 @@ export function createRegistry({ config, memory, skills, cwd, onAuditError = () 
   }
 
   return {
-    // Tool schemas in OpenAI function-calling format.
-    schemas() {
-      return [...tools.values()].map((tool) => ({
-        type: 'function',
-        function: { name: tool.name, description: tool.description, parameters: tool.parameters }
-      }));
+    // Tool schemas in OpenAI function-calling format. In read-only mode,
+    // mutating tools are omitted entirely so the model never sees them.
+    schemas({ readOnly = false } = {}) {
+      return [...tools.values()]
+        .filter((tool) => !readOnly || tool.allowedInReadOnly === true)
+        .map((tool) => ({
+          type: 'function',
+          function: { name: tool.name, description: tool.description, parameters: tool.parameters }
+        }));
     },
 
-    names() {
-      return [...tools.keys()];
+    names({ readOnly = false } = {}) {
+      return [...tools.values()]
+        .filter((tool) => !readOnly || tool.allowedInReadOnly === true)
+        .map((tool) => tool.name);
     },
 
-    // Run one tool. ctx carries { signal, approve } from the caller.
+    // Run one tool. ctx carries { signal, approve, readOnly } from the caller.
     async execute(name, args, ctx) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`Unknown tool "${name}". Available tools: ${[...tools.keys()].join(', ')}`);
+      if (ctx?.readOnly && tool.allowedInReadOnly !== true) {
+        throw new Error(`Tool "${name}" is not available in read-only mode`);
+      }
       validateArgs(tool.parameters, args);
       const started = Date.now();
       const approvals = [];

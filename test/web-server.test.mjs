@@ -401,6 +401,9 @@ test('a running turn reports busy and can be aborted', async (t) => {
   const busy = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: 'again' } });
   assert.equal(busy.status, 409);
 
+  const busyToggle = await json(`/api/sessions/${session.data.id}/read-only`, { method: 'POST', body: { enabled: true } });
+  assert.equal(busyToggle.status, 409, 'cannot change read-only mode while a turn is running');
+
   const deleteBusy = await json(`/api/sessions/${session.data.id}`, { method: 'DELETE' });
   assert.equal(deleteBusy.status, 409, 'cannot delete while a turn is running');
 
@@ -413,6 +416,71 @@ test('a running turn reports busy and can be aborted', async (t) => {
   assert.equal(deleted.status, 200);
   assert.equal(deleted.data.removed, true);
   assert.equal(deleted.data.lastSessionId, null);
+});
+
+test('read-only sessions hide writers and can be toggled per conversation', async (t) => {
+  const server = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"readonly-toggle.txt","content":"one"}' }), finishChunk('tool_calls')],
+    [textChunk('The write was refused.'), finishChunk('stop')],
+    [toolChunk({ index: 0, id: 'c2', name: 'write_file', args: '{"path":"readonly-toggle.txt","content":"two"}' }), finishChunk('tool_calls')],
+    [textChunk('The write succeeded.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, json, stream } = await setup(t, {
+    baseUrl: server.baseUrl,
+    config: { tools: { readOnly: true, files: { roots: [{ path: '.', access: 'rw' }] } } }
+  });
+
+  const status = await json('/api/status');
+  assert.equal(status.data.readOnly, true, 'status exposes the configured default');
+
+  const config = await json('/api/config');
+  assert.equal(config.data.effective.tools.readOnly, true);
+  assert.ok(config.data.effective.tools.shell.readOnlyAllowlist.includes('date'), 'effective defaults are available to the settings form');
+  assert.equal(config.data.effective.agent.toolCircuitBreaker.failureThreshold, 3);
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  assert.equal(session.data.readOnly, true, 'new sessions inherit the default');
+  const id = session.data.id;
+
+  const first = await stream(id, 'try to write');
+  const firstTool = first.events.find((event) => event.type === 'tool_end');
+  assert.equal(firstTool.ok, false);
+  assert.match(JSON.stringify(firstTool.result), /not available in read-only mode/);
+  assert.ok(!existsSync(join(dir, 'readonly-toggle.txt')), 'the refused write created nothing');
+  assert.ok(!server.requests[0].tools.some((tool) => tool.function.name === 'write_file'), 'write_file is not advertised');
+
+  const toggled = await json(`/api/sessions/${id}/read-only`, { method: 'POST', body: { enabled: false } });
+  assert.equal(toggled.status, 200);
+  assert.equal(toggled.data.readOnly, false);
+  assert.ok(Number.isInteger(toggled.data.contextTokens));
+
+  const second = await stream(id, 'write now');
+  const secondTool = second.events.find((event) => event.type === 'tool_end');
+  assert.equal(secondTool.ok, true);
+  assert.ok(server.requests[2].tools.some((tool) => tool.function.name === 'write_file'), 'write_file is advertised again');
+  assert.equal(readFileSync(join(dir, 'readonly-toggle.txt'), 'utf8'), 'two');
+});
+
+test('saving settings keeps existing conversation modes and applies the default to new ones', async (t) => {
+  const { json } = await setup(t, {
+    config: { tools: { readOnly: true, files: { roots: [{ path: '.', access: 'rw' }] } } }
+  });
+
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+  assert.equal(session.data.readOnly, true);
+  const toggled = await json(`/api/sessions/${session.data.id}/read-only`, { method: 'POST', body: { enabled: false } });
+  assert.equal(toggled.data.readOnly, false);
+
+  const current = await json('/api/config');
+  const saved = await json('/api/config', { method: 'PUT', body: { config: current.data.raw } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+
+  const existing = await json(`/api/sessions/${session.data.id}`);
+  assert.equal(existing.data.readOnly, false, 'the live conversation keeps its explicit toggle');
+
+  const fresh = await json('/api/sessions', { method: 'POST', body: {} });
+  assert.equal(fresh.data.readOnly, true, 'new conversations use the saved default');
 });
 
 test('facts can be listed, added and removed', async (t) => {

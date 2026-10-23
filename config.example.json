@@ -15,10 +15,14 @@
     "compact": "summarize",
     "compactAt": 0.8,
     "maxResultChars": 24000,
+    "toolCircuitBreaker": {
+      "failureThreshold": 3
+    },
     "systemPrompt": "",
     "systemPromptFile": ""
   },
   "tools": {
+    "readOnly": false,
     "files": {
       "roots": [
         { "path": ".", "access": "rw" },
@@ -37,7 +41,17 @@
       "approval": "always",
       "timeoutMs": 30000,
       "maxOutputBytes": 24000,
-      "denylist": ["rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", "wipefs"]
+      "denylist": ["rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", "wipefs"],
+      "readOnlyAllowlist": [
+        "journalctl",
+        "systemctl status",
+        "systemctl show",
+        "systemctl list-units",
+        "systemctl list-unit-files",
+        "systemctl is-active",
+        "systemctl is-enabled",
+        "date"
+      ]
     },
     "web": {
       "enabled": true,

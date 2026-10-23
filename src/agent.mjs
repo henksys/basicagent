@@ -11,7 +11,8 @@
 //
 // Safety rails in the loop itself:
 //   - maxIterations caps how many model/tool rounds one turn may use
-//   - the same tool + arguments failing three times stops the turn
+//   - the same tool + arguments failing repeatedly (agent.toolCircuitBreaker)
+//     stops the turn, default 3 times
 //   - the context budget (agent.contextTokens) is checked before every request:
 //     older turns are summarized, or trimmed when compaction is off/fails
 //   - Ctrl+C aborts the whole turn via AbortSignal
@@ -81,6 +82,9 @@ export class Agent {
     this.emit = emit;
     this.approve = approve;
     this.messages = [];
+    // Read-only mode is a tool policy, not part of the conversation. Callers
+    // can change it between turns with setReadOnly().
+    this.readOnly = Boolean(config.tools?.readOnly);
     // Older turns that no longer fit the budget are replaced by this text.
     // It lives beside `messages` (and is sent as part of the system prompt)
     // rather than pretending to be a user message, so it can never be
@@ -98,6 +102,16 @@ export class Agent {
     this.system = text;
     // The system prompt is part of the measured prompt, so an old anchor no
     // longer describes the outgoing request.
+    this.usageAnchor = null;
+  }
+
+  // Switch tool availability between normal and read-only mode. The tool
+  // schemas and the system prompt both change, so the usage anchor must be
+  // dropped as well.
+  setReadOnly(value) {
+    const next = Boolean(value);
+    if (next === this.readOnly) return;
+    this.readOnly = next;
     this.usageAnchor = null;
   }
 
@@ -127,6 +141,7 @@ export class Agent {
   async run(input, { signal } = {}) {
     this.messages.push({ role: 'user', content: input });
     const limits = this.config.agent;
+    const failureLimit = limits.toolCircuitBreaker?.failureThreshold ?? 3;
     let lastFailure = { key: '', count: 0 };
     this.compactionFailureNotice = false;
 
@@ -182,7 +197,7 @@ export class Agent {
           output = { error: failure.message };
         } else {
           try {
-            output = await this.registry.execute(name, args, { signal, approve: this.approve });
+            output = await this.registry.execute(name, args, { signal, approve: this.approve, readOnly: this.readOnly });
           } catch (error) {
             if (signal?.aborted) throw error;
             output = { error: error.message || String(error) };
@@ -191,11 +206,11 @@ export class Agent {
         const ok = !output || !Object.prototype.hasOwnProperty.call(output, 'error');
         this.emit({ type: 'tool_end', name, ok, durationMs: Date.now() - started, result: output });
 
-        // Circuit breaker: the same failing call three times is a loop.
+        // Circuit breaker: the same failing call repeated is a loop.
         const key = `${name}:${JSON.stringify(args)}`;
         if (!ok) {
           lastFailure = key === lastFailure.key ? { key, count: lastFailure.count + 1 } : { key, count: 1 };
-          if (lastFailure.count >= 3) {
+          if (lastFailure.count >= failureLimit) {
             throw new AgentError(`Tool "${name}" failed ${lastFailure.count} times with identical arguments; stopping to avoid a loop. Last error: ${output.error}`);
           }
         } else {
@@ -216,10 +231,13 @@ export class Agent {
 
   #schemas() {
     // Tool schemas are part of every request, so they are part of the measured
-    // prompt. They do not change during a turn; cache the array to avoid
-    // rebuilding it for every size check.
-    if (!this.toolSchemaCache) this.toolSchemaCache = this.registry.schemas();
-    return this.toolSchemaCache;
+    // prompt. The set changes with read-only mode; cache one array per mode.
+    if (!this.toolSchemaCache) this.toolSchemaCache = new Map();
+    const mode = this.readOnly ? 'readonly' : 'all';
+    if (!this.toolSchemaCache.has(mode)) {
+      this.toolSchemaCache.set(mode, this.registry.schemas({ readOnly: this.readOnly }));
+    }
+    return this.toolSchemaCache.get(mode);
   }
 
   #outgoing() {

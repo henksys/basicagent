@@ -47,7 +47,7 @@ function makeRegistry(execute) {
     schemas: () => [{ type: 'function', function: { name: 'fake_tool', description: '', parameters: { type: 'object', properties: {}, additionalProperties: false } } }],
     names: () => ['fake_tool'],
     execute: async (name, args, ctx) => {
-      calls.push({ name, args, hasApprove: typeof ctx.approve === 'function' });
+      calls.push({ name, args, hasApprove: typeof ctx.approve === 'function', readOnly: ctx.readOnly });
       return execute ? execute(name, args, ctx) : { ok: true };
     }
   };
@@ -123,6 +123,53 @@ test('the same failing call three times trips the circuit breaker', async () => 
 
   await assert.rejects(() => agent.run('go'), (error) => error instanceof AgentError && /3 times/.test(error.message));
   assert.equal(registry.calls.length, 3);
+});
+
+test('the tool breaker threshold is configurable', async () => {
+  const provider = new FakeProvider(Array.from({ length: 10 }, () => ({
+    content: '',
+    toolCalls: [toolCall('fake_tool', { same: true })],
+    finishReason: 'tool_calls'
+  })));
+  const registry = makeRegistry(() => {
+    throw new Error('always fails');
+  });
+  const agent = new Agent({
+    provider,
+    registry,
+    config: makeConfig({
+      agent: {
+        maxIterations: 25,
+        contextTokens: 24000,
+        compact: 'summarize',
+        compactAt: 0.8,
+        maxResultChars: 24000,
+        toolCircuitBreaker: { failureThreshold: 2 }
+      }
+    })
+  });
+  agent.setSystem('system');
+
+  await assert.rejects(() => agent.run('go'), (error) => error instanceof AgentError && /2 times/.test(error.message));
+  assert.equal(registry.calls.length, 2);
+});
+
+test('read-only mode is passed to the registry and clears the usage anchor', async () => {
+  const provider = new FakeProvider([
+    { content: '', toolCalls: [toolCall('fake_tool', {})], finishReason: 'tool_calls' },
+    { content: 'Done.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const registry = makeRegistry();
+  const agent = new Agent({ provider, registry, config: makeConfig() });
+  agent.setSystem('system');
+  agent.usageAnchor = { count: 1, tokens: 99 };
+  agent.setReadOnly(true);
+  assert.equal(agent.usageAnchor, null, 'switching mode invalidates the old usage anchor');
+
+  await agent.run('go');
+
+  assert.equal(agent.readOnly, true);
+  assert.equal(registry.calls[0].readOnly, true);
 });
 
 test('maxIterations stops a runaway loop', async () => {

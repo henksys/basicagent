@@ -10,6 +10,7 @@ export function memoryTools({ memory }) {
   return [
     {
       name: 'remember',
+      allowedInReadOnly: true, // memory tools are deliberately exempt
       description:
         'Save an explicit durable user preference as a key/value pair. ' +
         'Only store facts the user actually stated; never guesses. Overwrites an existing key.',
@@ -23,6 +24,7 @@ export function memoryTools({ memory }) {
     },
     {
       name: 'search_memory',
+      allowedInReadOnly: true,
       description: 'Search saved facts and past conversation sessions for a literal substring. Use for questions about earlier conversations or saved preferences.',
       parameters: {
         type: 'object',
@@ -37,6 +39,7 @@ export function memoryTools({ memory }) {
     },
     {
       name: 'forget',
+      allowedInReadOnly: true, // memory tools are deliberately exempt
       description:
         'Remove every saved fact and session line containing a literal substring. ' +
         'Search first to find the exact stored text. Returns how many records were removed.',

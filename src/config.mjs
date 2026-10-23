@@ -64,11 +64,20 @@ export const DEFAULTS = Object.freeze({
     // Per-tool-result cap. This is a different limit from contextTokens: it
     // stops one command or download from consuming the whole budget at once.
     maxResultChars: 24000,
+    // The loop breaker stops a turn when the same tool call (name + identical
+    // arguments) fails this many times consecutively. Success resets it.
+    toolCircuitBreaker: {
+      failureThreshold: 3
+    },
     // Optional replacement for the built-in persona paragraph.
     systemPrompt: '',
     systemPromptFile: ''
   },
   tools: {
+    // Read-only tool mode. File-writing tools are hidden and refused; shell
+    // commands must match tools.shell.readOnlyAllowlist. Memory tools are
+    // deliberately exempt.
+    readOnly: false,
     files: {
       // Each root grants access to a directory tree:
       //   rw       read and write without approval
@@ -91,7 +100,20 @@ export const DEFAULTS = Object.freeze({
       timeoutMs: 30000,
       maxOutputBytes: 24000,
       // A deliberately simple, obvious backstop. It is NOT a sandbox.
-      denylist: ['rm -rf /', 'mkfs', 'dd if=', 'shutdown', 'reboot', 'wipefs']
+      denylist: ['rm -rf /', 'mkfs', 'dd if=', 'shutdown', 'reboot', 'wipefs'],
+      // In read-only mode only commands matching one of these entries run.
+      // Each entry is a command plus an optional required argv prefix:
+      // "journalctl" or "systemctl status". Empty = no shell commands.
+      readOnlyAllowlist: [
+        'journalctl',
+        'systemctl status',
+        'systemctl show',
+        'systemctl list-units',
+        'systemctl list-unit-files',
+        'systemctl is-active',
+        'systemctl is-enabled',
+        'date'
+      ]
     },
     web: {
       // The fetch_url tool is read-only and enabled by default. Set
@@ -177,6 +199,11 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (!['summarize', 'off'].includes(agent.compact)) throw new Error('agent.compact must be "summarize" or "off"');
   if (typeof agent.compactAt !== 'number' || !Number.isFinite(agent.compactAt) || agent.compactAt <= 0 || agent.compactAt > 1) throw new Error('agent.compactAt must be a number greater than 0 and at most 1');
   if (!Number.isInteger(agent.maxResultChars) || agent.maxResultChars < 1000) throw new Error('agent.maxResultChars must be an integer of at least 1000');
+  const breaker = agent.toolCircuitBreaker;
+  if (!breaker || typeof breaker !== 'object' || Array.isArray(breaker)) throw new Error('agent.toolCircuitBreaker must be an object');
+  if (!Number.isInteger(breaker.failureThreshold) || breaker.failureThreshold < 1) throw new Error('agent.toolCircuitBreaker.failureThreshold must be a positive integer');
+
+  if (typeof config.tools.readOnly !== 'boolean') throw new Error('tools.readOnly must be a boolean');
 
   const files = config.tools.files;
   if (!Array.isArray(files.roots) || files.roots.length === 0) throw new Error('tools.files.roots must be a non-empty array');
@@ -201,6 +228,15 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (!Number.isInteger(shell.timeoutMs) || shell.timeoutMs <= 0) throw new Error('tools.shell.timeoutMs must be a positive integer');
   if (!Number.isInteger(shell.maxOutputBytes) || shell.maxOutputBytes <= 0) throw new Error('tools.shell.maxOutputBytes must be a positive integer');
   if (!Array.isArray(shell.denylist) || shell.denylist.some((entry) => typeof entry !== 'string')) throw new Error('tools.shell.denylist must be an array of strings');
+  if (!Array.isArray(shell.readOnlyAllowlist) || shell.readOnlyAllowlist.some((entry) => typeof entry !== 'string')) throw new Error('tools.shell.readOnlyAllowlist must be an array of strings');
+  shell.readOnlyAllowlist = shell.readOnlyAllowlist.map((entry, index) => {
+    if (entry.includes('\0')) throw new Error(`tools.shell.readOnlyAllowlist[${index}] must not contain NUL bytes`);
+    const clean = entry.trim().replace(/\s+/g, ' ');
+    if (!clean) throw new Error(`tools.shell.readOnlyAllowlist[${index}] must be a non-empty string`);
+    const [command] = clean.split(' ');
+    if (!/^[A-Za-z0-9_./+-]+$/.test(command)) throw new Error(`tools.shell.readOnlyAllowlist[${index}] must start with a plain executable name or path`);
+    return clean;
+  });
 
   const web = config.tools.web;
   if (typeof web.enabled !== 'boolean') throw new Error('tools.web.enabled must be a boolean');
@@ -263,6 +299,7 @@ export function loadConfig({ flags = {}, env = process.env, cwd = process.cwd() 
   if (flags.baseUrl !== undefined) config.provider.baseUrl = flags.baseUrl;
   if (flags.model !== undefined) config.provider.model = flags.model;
   if (flags.noWeb) config.tools.web.enabled = false;
+  if (flags.readOnly !== undefined) config.tools.readOnly = Boolean(flags.readOnly);
 
   // Data directory: flag > BASICAGENT_DATA_DIR > config file memory.dir >
   // XDG-aware default. The default only applies when the file did not set one;

@@ -530,6 +530,17 @@ code {
 }
 .composer textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; }
+.readonly-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.readonly-toggle input { width: auto; margin: 0; accent-color: var(--accent); }
+.readonly-toggle:has(input:disabled) { opacity: 0.55; cursor: default; }
 .composer-hint { font-size: 0.78rem; color: var(--fg-faint); margin-right: auto; }
 .context-gauge { font-family: var(--font-mono); font-size: 0.72rem; color: var(--fg-faint); white-space: nowrap; }
 .context-gauge.full { color: var(--error); }

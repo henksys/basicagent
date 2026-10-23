@@ -58,12 +58,12 @@ has no `dependencies`.
 | `src/config.mjs` | Built-in defaults, config file loading and merging (defaults <- file <- env <- flags), validation and path normalization. |
 | `src/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |
-| `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the failure circuit breaker and the context budget. Also defines the event stream. |
+| `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the configurable failure circuit breaker and the context budget. Also defines the event stream. |
 | `src/context.mjs` | Token accounting for the whole prompt (system, tools, summary, messages) and the `trimHistory` fallback. |
 | `src/compact.mjs` | Summarization helpers: safe cut points, transcript rendering, the summarizer prompt and summary normalization. |
-| `src/tools/index.mjs` | Tool registry: schema validation, dispatch, per-call audit log. |
+| `src/tools/index.mjs` | Tool registry: schema validation, read-only filtering, dispatch, per-call audit log. |
 | `src/tools/files.mjs` | File tools plus the root-based path policy (`checkAccess`, `softRealpath`). |
-| `src/tools/shell.mjs` | `run_command` with approval, timeout, denylist and output caps. |
+| `src/tools/shell.mjs` | `run_command` with approval, timeout, denylist, read-only allowlist and output caps. |
 | `src/tools/web.mjs` | `fetch_url`: guarded HTTP fetching, SSRF checks, bounded reads, HTML-to-text extraction. Omitted when `tools.web.enabled` is false. |
 | `src/tools/memory-tools.mjs` | `remember`, `search_memory`, `forget`. |
 | `src/skills.mjs` | SKILL.md discovery, frontmatter parsing (plain, `>` and `|`), prompt index generation, `load_skill` tool. |
@@ -97,8 +97,9 @@ has no `dependencies`.
 ### Hard limits inside the loop
 
 - **maxIterations** (`agent.maxIterations`, default 25) caps one turn.
-- **Circuit breaker**: the same tool name + arguments failing three times
-  aborts the turn with an `AgentError`.
+- **Circuit breaker**: the same tool name + identical arguments failing
+  `agent.toolCircuitBreaker.failureThreshold` times (default 3) aborts the
+  turn with an `AgentError`.
 - **Context budget** (`agent.contextTokens`, default 24000): counted over the
   whole prompt — system prompt, skills, facts, tool schemas, summary and
   messages — using `provider.usage.prompt_tokens` when available and UTF-8
@@ -159,15 +160,20 @@ is treated like local shell access:
 
 | Endpoint | Notes |
 | --- | --- |
-| `GET /api/status` | model, cwd, data dir, tools, skills, last session. |
+| `GET /api/status` | model, cwd, data dir, tools, skills, read-only default, last session. |
 | `POST /api/chat` | one turn; NDJSON stream with the events above. 409 while busy. |
 | `POST /api/chat/abort` | cancels the running turn (also on client disconnect). |
 | `POST /api/approvals/:id` | answers a paused approval; expired/unknown ids 404. |
-| `GET/POST /api/sessions`, `GET /api/sessions/:id` | session list and transcripts from `sessions/*.jsonl`. |
+| `GET/POST /api/sessions`, `GET /api/sessions/:id` | session list and transcripts from `sessions/*.jsonl`; includes `readOnly` for the conversation. |
+| `POST /api/sessions/:id/read-only` | changes the conversation's read-only mode (`{ enabled }`); 409 while a turn runs. |
 | `DELETE /api/sessions/:id` | removes one stored conversation and its in-memory session; the `--continue` pointer moves to the newest remaining session (409 while a turn runs). |
 | `GET/PUT /api/facts`, `DELETE /api/facts/:key` | fact store via `Memory` (exact-key delete). |
 | `GET /api/audit` | parsed `audit.jsonl`, newest first, `limit`/`tool`/`ok` filters. |
 | `GET/PUT /api/config` | raw file + effective (masked) config; PUT validates, writes atomically and live-reloads every session. |
+
+The chat composer has a per-conversation read-only toggle. Settings sets the
+default for new conversations; an existing live conversation keeps its current
+mode when settings are saved.
 
 Sessions are never replayed from tool traffic: a `WebSession` loads only the
 persisted user/assistant text, exactly like `--session` in the CLI. Approvals
@@ -204,18 +210,21 @@ A tool is a plain object:
   name: 'read_file',
   description: 'Shown to the model; say when to use the tool and what it returns.',
   parameters: { type: 'object', properties: { ... }, required: [...], additionalProperties: false },
+  allowedInReadOnly: true, // false/omitted = hidden and refused in read-only mode
   async run(args, ctx) { return { any: 'JSON-serializable result' }; }
 }
 ```
 
 - `ctx.signal` — AbortSignal for the current turn; long operations must honor it.
 - `ctx.approve(description)` — asks the user for approval; returns a boolean.
+- `ctx.readOnly` — true when the turn runs in read-only tool mode. The registry
+  both filters schemas and refuses a tool whose `allowedInReadOnly` is not true.
 
 The registry (`src/tools/index.mjs`) validates arguments against `parameters`
 before running anything and rejects unknown arguments. Throwing inside `run`
 does not crash the turn: the error text is returned to the model as the tool
 result so it can correct itself. Three identical failures trip the circuit
-breaker.
+breaker by default (`agent.toolCircuitBreaker.failureThreshold`).
 
 ### Adding a tool
 
@@ -223,6 +232,8 @@ breaker.
 2. Register it in `createRegistry` in `src/tools/index.mjs`.
 3. Add a unit test under `test/`.
 4. If the tool can change user data, think about approval and root policy first.
+5. Set `allowedInReadOnly: true` only when the tool is safe to expose in
+   read-only mode; otherwise omit it or set it to `false`.
 
 ### Built-in tools
 
@@ -261,6 +272,30 @@ Paths outside every root are refused with an error the model can read.
 **Shell caveat:** approving a `run_command` is full trust; a command can write
 anywhere, including outside all roots. The roots constrain only the file tools.
 Keep `tools.shell.enabled` false unless you need it.
+
+## Read-only tool mode
+
+`tools.readOnly` (default `false`) is a policy for **file and shell tools**.
+`fetch_url`, skills and the memory tools remain available.
+
+- File writers (`write_file`, `edit_file`, `append_file`, `rename_file`) are
+  removed from the schema and refused by `registry.execute`. `read_file`,
+  `list_dir`, `load_skill` and `fetch_url` remain available.
+- `run_command` is available only when shell is enabled and
+  `tools.shell.readOnlyAllowlist` is non-empty. Each entry is a command plus an
+  optional required argv prefix: `"journalctl"` or `"systemctl status"`.
+  Remaining arguments are free, so the allowlist is a guardrail, not a sandbox.
+  The existing denylist, approval policy, timeout, output caps and cwd root
+  checks still apply. An empty allowlist hides `run_command` in read-only mode.
+- Memory tools (`remember`, `forget`, `search_memory`) are deliberately exempt.
+  `forget` can remove session records, but that is agent data rather than
+  system files.
+- The web UI keeps read-only state per conversation and exposes a toggle in the
+  composer. Settings sets the default for new conversations. The CLI has
+  `--read-only` / `--no-read-only` and the REPL command `/readonly on|off`.
+
+There are no `chmod`/`chown` tools, so blocking the file writers covers the
+current file toolset's content, creation, rename and attribute surface.
 
 ## Web access policy
 
@@ -352,11 +387,13 @@ Resuming replays only user/assistant text; tool traffic is not replayed.
 ## CLI modes
 
 - **REPL** (`basicagent`): interactive; commands `/help /new /reload /skills
-  /tools /model [name] /config /quit`. Ctrl+C cancels the running turn;
-  Ctrl+D exits. `/reload` re-reads the config file, skills, provider and
-  prompt while keeping the conversation.
+  /tools /model [name] /context /compact /readonly [on|off] /config /quit`.
+  Ctrl+C cancels the running turn; Ctrl+D exits. `/reload` re-reads the config
+  file, skills, provider and prompt while keeping the conversation.
 - **One-shot** (`basicagent "..."` or a pipe): runs one turn and exits.
-  Answer on stdout, tool trace on stderr, exit code 0/1.
+  Answer on stdout, tool trace on stderr, exit code 0/1. `--read-only` enables
+  read-only tool mode for the run; `--no-read-only` overrides a config default
+  that enables it.
 - **JSON** (`--json`): one-shot with one JSON event per line on stdout. This
   is the mode to embed in other programs.
 
@@ -364,13 +401,16 @@ Resuming replays only user/assistant text; tool traffic is not replayed.
 
 See `config.example.json` and the table in `docs/TUTORIAL.md`. Precedence:
 defaults, config file, environment (`BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`,
-`BASICAGENT_MODEL`, `BASICAGENT_DATA_DIR`), CLI flags.
+`BASICAGENT_MODEL`, `BASICAGENT_DATA_DIR`), CLI flags. Read-only mode is
+`tools.readOnly`; its shell allowlist is `tools.shell.readOnlyAllowlist`; the
+tool-loop breaker is `agent.toolCircuitBreaker.failureThreshold`.
 
 ## Testing
 
-- `npm test` — 128 offline tests: config merging, SSE parsing, the agent loop,
-  the path policy, skills, memory, the web server (auth, streaming, approvals,
-  config save) and the CLI end to end against a fake in-process provider.
+- `npm test` — offline tests: config merging, SSE parsing, the agent loop,
+  the path policy, read-only tool filtering and the shell allowlist, skills,
+  memory, the web server (auth, streaming, approvals, config save,
+  read-only toggles) and the CLI end to end against fake in-process servers.
 - `npm run test:live` — opt-in integration test against Ollama Cloud
   (`OLLAMA_API_KEY_CLOUD`, default model `gemma4:31b`). It creates a file with
   `write_file` and reads it back with `read_file`.

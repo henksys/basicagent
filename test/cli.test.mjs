@@ -202,6 +202,47 @@ test('--no-web removes fetch_url from the tool schema', async (t) => {
   assert.ok(names.includes('read_file'), 'other tools remain');
 });
 
+test('--read-only hides file writers and blocks a write attempt', async (t) => {
+  const server = await startFakeProvider([
+    [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"blocked.txt","content":"x"}' }), finishChunk('tool_calls')],
+    [textChunk('Read-only mode refused the write.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const result = await runCli(['--config', configPath, '--json', '--read-only', 'write blocked.txt'], { cwd: dir });
+  assert.equal(result.code, 0, result.stderr);
+  const names = server.requests[0].tools.map((tool) => tool.function.name);
+  assert.ok(!names.includes('write_file'), 'write_file must be absent from the schema');
+  assert.ok(names.includes('read_file'), 'read tools remain');
+  const toolEnd = parseJSONL(result.stdout).find((event) => event.type === 'tool_end');
+  assert.equal(toolEnd.ok, false);
+  assert.match(JSON.stringify(toolEnd.result), /not available in read-only mode/);
+  assert.ok(!existsSync(join(dir, 'blocked.txt')));
+});
+
+test('--no-read-only overrides a config that enables read-only mode', async (t) => {
+  const server = await startFakeProvider([
+    [textChunk('Configured read-only.'), finishChunk('stop')],
+    [textChunk('Overridden writable.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const raw = JSON.parse(readFileSync(configPath, 'utf8'));
+  raw.tools.readOnly = true;
+  writeFileSync(configPath, JSON.stringify(raw));
+
+  const configured = await runCli(['--config', configPath, '--json', 'hello'], { cwd: dir });
+  assert.equal(configured.code, 0, configured.stderr);
+  assert.ok(!server.requests[0].tools.some((tool) => tool.function.name === 'write_file'));
+
+  const overridden = await runCli(['--config', configPath, '--json', '--no-read-only', 'hello'], { cwd: dir });
+  assert.equal(overridden.code, 0, overridden.stderr);
+  assert.ok(server.requests[1].tools.some((tool) => tool.function.name === 'write_file'));
+});
+
 test('--data-dir puts sessions and the audit log there', async (t) => {
   const server = await startFakeProvider([
     [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"hello.txt","content":"hi"}' }), finishChunk('tool_calls')],

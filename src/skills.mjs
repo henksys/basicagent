@@ -137,6 +137,7 @@ export function skillIndexText(skills) {
 export function loadSkillTool(skills, { maxResultChars = 24000 } = {}) {
   return {
     name: 'load_skill',
+    allowedInReadOnly: true,
     description:
       'Load the full instructions of a skill listed in the system prompt. ' +
       'Call this before doing work that a skill describes. Returns the skill text and its directory; ' +

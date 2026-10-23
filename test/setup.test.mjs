@@ -167,6 +167,9 @@ test('Enter-only run writes the example defaults without a maxTokens cap', async
   assert.equal(raw.provider.apiKeyEnv, 'BASICAGENT_API_KEY');
   assert.ok(!('maxTokens' in raw.provider), 'no output cap is written; the provider default applies');
   assert.equal(raw.tools.shell.enabled, false);
+  assert.equal(raw.tools.readOnly, false, 'new installs get the read-only default');
+  assert.ok(raw.tools.shell.readOnlyAllowlist.includes('date'));
+  assert.equal(raw.agent.toolCircuitBreaker.failureThreshold, 3);
   assert.equal(raw.memory.enabled, true);
   assert.equal(raw.memory.dir, '~/.local/share/basicagent');
   assert.ok(raw.tools.web.enabled, 'other example settings are kept');
@@ -211,6 +214,7 @@ test('an existing config keeps its values and unrelated settings', async (t) => 
   assert.equal(raw.provider.maxTokens, 8192, 'an existing cap is preserved');
   assert.deepEqual(raw.tools.files.roots, [{ path: '/somewhere', access: 'ro' }]);
   assert.equal(raw.tools.shell.enabled, true);
+  assert.ok(!('readOnly' in raw.tools), 'an existing file keeps its minimal shape; defaults apply at runtime');
   assert.deepEqual(raw.custom, { keep: true });
 });
 

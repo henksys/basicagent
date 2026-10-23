@@ -9,6 +9,10 @@
 //   WebSession   provider + registry + agent + memory for one session id
 //   SessionManager   lookup/creation of WebSessions and the shared fact store
 //
+// A WebSession also holds its per-conversation read-only mode. Settings supply
+// the default for new sessions; the browser can change a live session through
+// setReadOnly() without touching the config file.
+//
 // Approval is bridged to the browser: instead of a y/N prompt, the session
 // emits { type: "approval", id, description } through its event stream and
 // waits for resolveApproval(id, approved) from an HTTP request. Without an
@@ -36,6 +40,7 @@ export class WebSession {
     this.pendingApprovals = new Map();
     this.busy = false;
     this.controller = null;
+    this.readOnly = Boolean(config.tools?.readOnly);
     this.#createMemory(sessionId);
     this.#build();
     this.agent.messages = this.memory ? this.memory.readSession(this.sessionId) : [];
@@ -59,11 +64,12 @@ export class WebSession {
       emit: (event) => this.emit(event),
       approve: (description) => this.#approve(description)
     });
+    this.agent.setReadOnly(this.readOnly);
     this.#refreshSystemPrompt();
   }
 
   #refreshSystemPrompt() {
-    this.agent.setSystem(buildSystemPrompt({ config: this.config, skills: this.skills, memory: this.memory, cwd: this.cwd }));
+    this.agent.setSystem(buildSystemPrompt({ config: this.config, skills: this.skills, memory: this.memory, cwd: this.cwd, readOnly: this.readOnly }));
   }
 
   // Event fan-out to the active chat stream(s).
@@ -100,6 +106,7 @@ export class WebSession {
     this.listeners.add(forward);
     try {
       this.memory?.reloadFacts();
+      this.agent.setReadOnly(this.readOnly);
       this.#refreshSystemPrompt();
       this.memory?.appendEvent('user', input);
       const result = await this.agent.run(input, { signal: this.controller.signal });
@@ -111,6 +118,20 @@ export class WebSession {
       this.controller = null;
       this.#denyPending();
     }
+  }
+
+  // Change the per-conversation read-only mode. Returns the new mode and the
+  // recalculated prompt size so the browser can update its gauge immediately.
+  setReadOnly(value) {
+    if (this.busy) {
+      const error = new Error('A turn is running in this session');
+      error.status = 409;
+      throw error;
+    }
+    this.readOnly = Boolean(value);
+    this.agent.setReadOnly(this.readOnly);
+    this.#refreshSystemPrompt();
+    return { readOnly: this.readOnly, contextTokens: this.contextTokens() };
   }
 
   abort() {
@@ -163,7 +184,7 @@ export class WebSession {
   }
 
   info() {
-    return { id: this.sessionId, busy: this.busy, messages: this.agent.messages.length };
+    return { id: this.sessionId, busy: this.busy, readOnly: this.readOnly, messages: this.agent.messages.length };
   }
 
   // Size of the prompt the agent would send now, in tokens. This is the same
