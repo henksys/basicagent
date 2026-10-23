@@ -100,6 +100,9 @@ The UI has three tabs:
   guardrails, troubleshooting.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is organized,
   the turn lifecycle, and how to add tools/providers/skills.
+- [docs/SKILLBASEDFUNTIONALITY.md](docs/SKILLBASEDFUNTIONALITY.md) — how to add
+  functionality with skills, using PDF Q&A via `pdftotext` and `grep` as an
+  example.
 - [persona-example.md](persona-example.md) — the default agent persona and how
   to replace it.
 - [skills/basicagent/SKILL.md](skills/basicagent/SKILL.md) — the bundled
