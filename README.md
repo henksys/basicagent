@@ -17,7 +17,7 @@ toolset is deliberately small:
 - web fetch with SSRF and domain protection
 - SKILL.md skills and persistent JSONL memory
 
-**Size:** the agent itself is about 7,500 lines of source (CLI, core and web
+**Size:** approximately 600 Kib. The agent itself is about 7,500 lines of source (CLI, core and web
 interface). The test suite adds about 3,300 lines; together they are about
 10,800. Node.js 24+ built-ins are the only requirement: no external
 dependencies and no build step.
