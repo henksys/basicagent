@@ -8,9 +8,8 @@ loads the full instructions only when it needs them. That keeps the agent small
 and lets you add a workflow without rebuilding anything.
 
 The trade-off is manual work: you have to choose the right machine tool, write
-the skill and test it. In exchange, the existing file and shell tools can be
-combined in many ways, and you can add functionality without growing the agent
-itself.
+the skill, or let BasicAgent write it for you, and test it. In exchange, the existing file and shell tools can be
+combined in many ways.
 
 This guide uses one example: **asking questions about a PDF**. The agent
 extracts the text with `pdftotext`, searches it with `grep`, and reads the
@@ -131,8 +130,8 @@ In read-only mode you cannot write notes; answer questions only.
 
 ## Configure basicagent
 
-The shell is off by default. Add this to
-`~/.config/basicagent/config.json`, keeping your existing settings:
+The shell is off by default. Check in your config file 
+`~/.config/basicagent/config.json`, that the shell-tool is enabled :
 
 ```json
 "tools": {
@@ -147,6 +146,7 @@ The shell is off by default. Add this to
   }
 }
 ```
+( Or the easy way is to enable the shell tool in your web-interface)
 
 - `approval: "always"` shows every `pdftotext` and `grep` call and waits for a
   `y`. Approving a shell command is full trust.
@@ -162,7 +162,7 @@ In the REPL, run `/skills`; the `pdf` skill should appear. If you edit it, run
 
 ## Try it
 
-Start basicagent in the directory containing `Morrowind-Manual.pdf` and ask:
+Point BasicAgent in your conversation to the directory containing `Morrowind-Manual.pdf` and ask:
 
 ```text
 What are the playable races in Morrowind? Use the manual.
