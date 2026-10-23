@@ -433,7 +433,7 @@ Then `/reload` in the REPL (or just start a new run). See
   Paths outside all roots are always refused. When roots overlap, the most
   specific (longest) matching root decides, so a broad `rw` root cannot
   silently shadow a narrower `deny` or `approval` root.
-  ### Important!! : the first entry in "roots" ("path": ".") is the directory from which BasicAgent is started (if you started it from the CLI). This means that by default BasicAgent will have READ/WRITE rights in that directory. This is by default, because it is assumed that the user would normally run BasicAgent from within it's own folder, so that it has  full access its own config and skill files to be able to configure itself on the users request.
+  ### Important!! : the first entry in "roots" ("path": ".") is the directory from which BasicAgent is started (if you started it from the CLI). This means that by default BasicAgent will have READ/WRITE rights in that directory. This is by default, because it is assumed that the user would normally run BasicAgent from within it's own folder, so that it has full access to its own config and skill files to be able to configure itself on the users request.
 - `protectedPaths` force a prompt even inside an `rw` root. The active
   basicagent config file and the memory data directory (`memory.dir`, holding
   facts, sessions and the audit log) are protected automatically, so the agent
