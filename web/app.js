@@ -161,13 +161,14 @@
     $('#footer-version').textContent = status.version ? `v${status.version}` : '';
     $('#data-dir').textContent = status.dataDir || 'memory disabled';
     $('#chat-sub').textContent = `${status.model} · ${status.cwd}`;
+    updateImageUI();
     renderContextGauge();
     return status;
   }
 
   // ===== Chat =================================================================
 
-  const chat = { sessionId: null, busy: false, readOnly: false, assistantEl: null, pendingTools: [], contextTokens: null };
+  const chat = { sessionId: null, busy: false, readOnly: false, assistantEl: null, pendingTools: [], pendingImages: [], contextTokens: null };
 
   // Compact token count for the context gauge (999, 1.5k, 25k).
   function formatTokens(value) {
@@ -175,6 +176,119 @@
     if (tokens < 1000) return String(tokens);
     if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
     return `${Math.round(tokens / 1000)}k`;
+  }
+
+  // ===== Image attachments ===================================================
+
+  function formatBytes(bytes) {
+    const units = ['B', 'KiB', 'MiB', 'GiB'];
+    let value = Math.max(0, Number(bytes) || 0);
+    let index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+      value /= 1024;
+      index++;
+    }
+    return `${index === 0 ? value : value.toFixed(1)} ${units[index]}`;
+  }
+
+  function imageLimits() {
+    return status?.images || null;
+  }
+
+  function isAllowedImageFile(file) {
+    const limits = imageLimits();
+    if (!limits) return false;
+    const type = String(file.type || '').toLowerCase();
+    if (limits.types.includes(type) || type === 'image/jpg') return true;
+    // Some file pickers leave the MIME type empty; fall back to the extension.
+    // A declared non-image type is never overridden by the filename.
+    if (!type) return /\.(png|jpe?g|webp)$/i.test(file.name || '');
+    return false;
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('could not read the file'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function renderPendingImages() {
+    const strip = $('#pending-images');
+    strip.textContent = '';
+    strip.hidden = chat.pendingImages.length === 0;
+    for (const attachment of chat.pendingImages) {
+      const item = el('div', 'attachment');
+      const image = el('img', 'attachment-image');
+      image.src = attachment.dataUrl;
+      image.alt = attachment.name;
+      image.title = attachment.name;
+      const remove = el('button', 'attachment-remove', '×');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${attachment.name}`);
+      remove.addEventListener('click', () => {
+        const index = chat.pendingImages.indexOf(attachment);
+        if (index >= 0) chat.pendingImages.splice(index, 1);
+        renderPendingImages();
+      });
+      item.append(image, remove);
+      strip.append(item);
+    }
+  }
+
+  async function addPendingImages(files) {
+    const limits = imageLimits();
+    if (!limits?.enabled) {
+      addNotice('Image attachments are disabled in the configuration.', 'warn');
+      return;
+    }
+    for (const file of [...files]) {
+      if (chat.pendingImages.length >= limits.maxImages) {
+        addNotice(`You can attach at most ${limits.maxImages} images per message.`, 'warn');
+        break;
+      }
+      if (!isAllowedImageFile(file)) {
+        addNotice(`${file.name || 'File'}: only PNG, JPEG and WebP images are supported.`, 'warn');
+        continue;
+      }
+      if (file.size === 0) {
+        addNotice(`${file.name || 'Image'} is empty.`, 'warn');
+        continue;
+      }
+      if (file.size > limits.maxBytes) {
+        addNotice(
+          `${file.name || 'Image'} is ${formatBytes(file.size)}; the limit is ${formatBytes(limits.maxBytes)} per image.`,
+          'warn'
+        );
+        continue;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (chat.pendingImages.length >= limits.maxImages) {
+          addNotice(`You can attach at most ${limits.maxImages} images per message.`, 'warn');
+          break;
+        }
+        chat.pendingImages.push({ name: file.name || 'image', dataUrl });
+      } catch (error) {
+        addNotice(`Could not read ${file.name || 'image'}: ${error.message}`, 'warn');
+      }
+    }
+    renderPendingImages();
+  }
+
+  function updateImageUI() {
+    const limits = imageLimits();
+    const button = $('#attach-image');
+    button.hidden = !limits?.enabled;
+    button.disabled = chat.busy || !limits?.enabled;
+    if (limits?.enabled) {
+      button.title = `Attach up to ${limits.maxImages} PNG, JPEG or WebP images (max ${formatBytes(limits.maxBytes)} each)`;
+    } else {
+      chat.pendingImages = [];
+      renderPendingImages();
+    }
   }
 
   // The gauge compares the whole prompt (system prompt, tools, summary and
@@ -200,12 +314,23 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
-  function addMessage(role, text) {
+  function addMessage(role, text, images = []) {
     const message = el('article', `msg msg-${role}`);
     message.append(el('div', 'msg-role', role === 'user' ? 'you' : 'basicagent'));
     const body = el('div', 'msg-text');
     body.textContent = text;
     message.append(body);
+    if (images?.length) {
+      const strip = el('div', 'msg-images');
+      for (const attachment of images) {
+        const image = el('img', 'msg-image');
+        image.src = attachment.dataUrl;
+        image.alt = attachment.name || 'attached image';
+        image.title = attachment.name || '';
+        strip.append(image);
+      }
+      message.append(strip);
+    }
     $('#messages').append(message);
     scrollMessages();
     return body;
@@ -407,22 +532,26 @@
     $('#stop').hidden = !chat.busy;
     $('#send').disabled = chat.busy;
     $('#prompt').disabled = chat.busy;
+    $('#attach-image').disabled = chat.busy || !imageLimits()?.enabled;
+    $('#audit-prune').disabled = chat.busy || !status?.memoryEnabled;
     $('#readonly-toggle').disabled = chat.busy || !chat.sessionId;
     if (chat.busy) $('#prompt').blur();
     else $('#prompt').focus();
   }
 
-  async function sendMessage(message) {
-    if (chat.busy || !message.trim()) return;
+  async function sendMessage(message, images = []) {
+    if (chat.busy || (!message.trim() && images.length === 0)) return;
     if (!chat.sessionId) await newSession();
     chat.busy = true;
     updateBusyUI();
-    addMessage('user', message);
+    addMessage('user', message, images);
     try {
+      const payload = { sessionId: chat.sessionId, message };
+      if (images.length) payload.images = images.map(({ name, dataUrl }) => ({ name, dataUrl }));
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ sessionId: chat.sessionId, message })
+        body: JSON.stringify(payload)
       });
       if (response.status === 401) {
         showTokenGate('The token was rejected. Paste the current token from the server output.');
@@ -467,7 +596,9 @@
     $('#messages').textContent = '';
     chat.assistantEl = null;
     chat.pendingTools = [];
+    chat.pendingImages = [];
     chat.contextTokens = contextTokens;
+    renderPendingImages();
     renderContextGauge();
     $('#chat-title').textContent = id;
     if (messages && messages.length) {
@@ -509,9 +640,48 @@
     event.preventDefault();
     const input = $('#prompt');
     const text = input.value.trim();
-    if (!text || chat.busy) return;
+    const images = chat.pendingImages;
+    if ((!text && images.length === 0) || chat.busy) return;
     input.value = '';
-    sendMessage(text);
+    chat.pendingImages = [];
+    renderPendingImages();
+    sendMessage(text, images);
+  });
+
+  $('#attach-image').addEventListener('click', () => {
+    $('#image-input').click();
+  });
+
+  $('#image-input').addEventListener('change', (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = '';
+    addPendingImages(files).catch((error) => addNotice(`Could not attach image: ${error.message}`, 'warn'));
+  });
+
+  $('#prompt').addEventListener('paste', (event) => {
+    const files = [...(event.clipboardData?.files || [])];
+    // Do not hijack a normal text paste (or a non-image file) from the
+    // clipboard; only intercept when there is actual image data.
+    if (!files.some((file) => String(file.type || '').toLowerCase().startsWith('image/'))) return;
+    event.preventDefault();
+    addPendingImages(files).catch((error) => addNotice(`Could not attach image: ${error.message}`, 'warn'));
+  });
+
+  const composer = $('#composer');
+  composer.addEventListener('dragover', (event) => {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault();
+    composer.classList.add('dragover');
+  });
+  composer.addEventListener('dragleave', (event) => {
+    if (!composer.contains(event.relatedTarget)) composer.classList.remove('dragover');
+  });
+  composer.addEventListener('drop', (event) => {
+    const files = [...(event.dataTransfer?.files || [])];
+    if (files.length === 0) return;
+    event.preventDefault();
+    composer.classList.remove('dragover');
+    addPendingImages(files).catch((error) => addNotice(`Could not attach image: ${error.message}`, 'warn'));
   });
 
   $('#prompt').addEventListener('keydown', (event) => {
@@ -973,6 +1143,8 @@
 
   async function loadAudit() {
     if (!status) await loadStatus().catch(() => {});
+    $('#audit-prune-row').hidden = !status?.memoryEnabled;
+    $('#audit-prune').disabled = chat.busy || !status?.memoryEnabled;
     const body = $('#audit-body');
     const empty = $('#audit-empty');
     const toolSelect = $('#audit-tool');
@@ -1022,6 +1194,25 @@
   $('#audit-tool').addEventListener('change', () => loadAudit());
   $('#audit-ok').addEventListener('change', () => loadAudit());
   $('#audit-refresh').addEventListener('click', () => loadAudit());
+
+  $('#audit-prune').addEventListener('click', async () => {
+    const weeks = Number($('#audit-prune-weeks').value);
+    const age = weeks === 1 ? '1 week' : `${weeks} weeks`;
+    if (!confirm(`Delete all audit entries older than ${age}? This applies to the whole audit log and cannot be undone.`)) return;
+    const button = $('#audit-prune');
+    button.disabled = true;
+    try {
+      const data = await api(`/api/audit?olderThanWeeks=${encodeURIComponent(weeks)}`, { method: 'DELETE' });
+      const removed = Number(data.removed) || 0;
+      const kept = Number(data.kept) || 0;
+      showToast(`Removed ${removed} audit ${removed === 1 ? 'entry' : 'entries'}; ${kept} kept.`, 'ok');
+      await loadAudit();
+    } catch (error) {
+      showToast(`Could not prune the audit log: ${error.message}`, 'error');
+    } finally {
+      button.disabled = chat.busy || !status?.memoryEnabled;
+    }
+  });
 
   // ===== Boot =================================================================
 

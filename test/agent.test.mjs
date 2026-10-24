@@ -336,3 +336,43 @@ test('a failed summary falls back to trimming without breaking the turn', async 
   assert.ok(events.some((event) => event.type === 'warning' && /summarization failed/i.test(event.message)));
   assert.equal(agent.messages.find((message) => message.role === 'tool').content, TRIMMED_TOOL_RESULT);
 });
+
+test('image attachments become OpenAI content parts', async () => {
+  const provider = new FakeProvider([
+    { content: 'It is a screenshot.', toolCalls: [], finishReason: 'stop' }
+  ]);
+  const agent = new Agent({ provider, registry: makeRegistry(), config: makeConfig() });
+  agent.setSystem('system');
+  const attachment = {
+    name: 'shot.png',
+    mediaType: 'image/png',
+    bytes: 42,
+    dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+  };
+
+  const result = await agent.run('What is this?', { images: [attachment] });
+
+  assert.equal(result.text, 'It is a screenshot.');
+  const user = provider.calls[0].find((message) => message.role === 'user');
+  assert.ok(Array.isArray(user.content));
+  assert.deepEqual(user.content[0], { type: 'text', text: 'What is this?' });
+  assert.deepEqual(user.content[1], {
+    type: 'image_url',
+    image_url: { url: attachment.dataUrl }
+  });
+});
+
+test('image input can be disabled by configuration', async () => {
+  const provider = new FakeProvider([]);
+  const agent = new Agent({
+    provider,
+    registry: makeRegistry(),
+    config: makeConfig({ images: { enabled: false, maxImages: 4, tokensPerImage: 1200, detail: 'auto' } })
+  });
+  agent.setSystem('system');
+  await assert.rejects(
+    () => agent.run('look', { images: [{ name: 'x.png', dataUrl: 'data:image/png;base64,AA==' }] }),
+    /Image input is disabled/
+  );
+  assert.equal(provider.calls.length, 0);
+});

@@ -11,6 +11,7 @@ import { loadConfig } from '../src/config.mjs';
 import { startWebServer } from '../src/web/server.mjs';
 
 const TOKEN = 'test-token';
+const PNG_DATA_URL = `data:image/png;base64,${Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64')}`;
 
 async function setup(t, { baseUrl = 'http://127.0.0.1:9/v1', config = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'basicagent-web-'));
@@ -23,6 +24,7 @@ async function setup(t, { baseUrl = 'http://127.0.0.1:9/v1', config = {} } = {})
     memory: config.memory || { dir: join(dir, 'data') }
   };
   if (config.agent) raw.agent = config.agent;
+  if (config.images) raw.images = config.images;
   writeFileSync(configPath, JSON.stringify(raw));
 
   const loaded = loadConfig({ flags: { config: configPath }, cwd: dir });
@@ -41,11 +43,11 @@ async function setup(t, { baseUrl = 'http://127.0.0.1:9/v1', config = {} } = {})
     return { status: response.status, data };
   }
 
-  async function stream(sessionId, message, { onEvent } = {}) {
+  async function stream(sessionId, message, { onEvent, images } = {}) {
     const response = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, message })
+      body: JSON.stringify({ sessionId, message, ...(images ? { images } : {}) })
     });
     if (!response.ok) {
       const data = await response.json().catch(() => null);
@@ -138,7 +140,12 @@ test('status and static files', async (t) => {
   const index = await fetch(`${base}/`);
   assert.equal(index.status, 200);
   assert.match(index.headers.get('content-type'), /text\/html/);
-  assert.match(await index.text(), /basicagent/);
+  const html = await index.text();
+  assert.match(html, /basicagent/);
+  assert.match(html, /id="attach-image"/, 'the composer exposes image attachments');
+  assert.match(html, /data-config="images\.enabled"/, 'the settings form exposes the image switch');
+  assert.match(html, /id="audit-prune-weeks"/, 'the audit tab exposes the age selector');
+  assert.match(html, /id="audit-prune"/, 'the audit tab exposes the prune button');
 
   assert.equal((await fetch(`${base}/app.css`)).status, 200);
   assert.equal((await fetch(`${base}/assets/css/tokens.css`)).status, 200);
@@ -152,6 +159,10 @@ test('status and static files', async (t) => {
   assert.equal(data.model, 'fake-model');
   assert.equal(data.memoryEnabled, true);
   assert.equal(data.contextTokens, 24000);
+  assert.equal(data.images.enabled, true);
+  assert.equal(data.images.maxImages, 4);
+  assert.equal(data.images.maxBytes, 5 * 1024 * 1024);
+  assert.deepEqual(data.images.types, ['image/png', 'image/jpeg', 'image/webp']);
   assert.ok(data.tools.includes('write_file'));
   assert.ok(data.tools.includes('fetch_url'));
   assert.ok(data.skills.some((skill) => skill.name === 'basicagent'), 'bundled skill is visible');
@@ -201,6 +212,74 @@ test('chat streams events, persists the session and lists it', async (t) => {
   assert.equal(missing.status, 400);
   const empty = await json('/api/chat', { method: 'POST', body: { sessionId: session.data.id, message: '   ' } });
   assert.equal(empty.status, 400);
+});
+
+test('web chat accepts image data URLs and stores only a marker', async (t) => {
+  const provider = await startFakeProvider([
+    [textChunk('I see a tiny image.'), finishChunk('stop')],
+    [textChunk('Image only.'), finishChunk('stop')]
+  ]);
+  t.after(() => provider.close());
+  const { dir, json, stream } = await setup(t, { baseUrl: provider.baseUrl });
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+
+  const withText = await stream(session.data.id, 'what is this', {
+    images: [{ name: 'shot.png', dataUrl: PNG_DATA_URL }]
+  });
+  assert.equal(withText.status, 200, JSON.stringify(withText.data));
+  const user = provider.requests[0].messages.find((message) => message.role === 'user');
+  assert.ok(Array.isArray(user.content));
+  assert.deepEqual(user.content[0], { type: 'text', text: 'what is this' });
+  assert.match(user.content[1].image_url.url, /^data:image\/png;base64,/);
+
+  const imageOnly = await stream(session.data.id, '', {
+    images: [{ name: 'only.webp', dataUrl: `data:image/webp;base64,${Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x1a, 0, 0, 0]), Buffer.from('WEBPVP8 '), Buffer.alloc(4)]).toString('base64')}` }]
+  });
+  assert.equal(imageOnly.status, 200, JSON.stringify(imageOnly.data));
+  const secondUser = provider.requests[1].messages.filter((message) => message.role === 'user').at(-1);
+  assert.equal(secondUser.content.length, 1);
+  assert.equal(secondUser.content[0].type, 'image_url');
+
+  const lines = readFileSync(join(dir, 'data', 'sessions', `${session.data.id}.jsonl`), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(lines[0].content, 'what is this\n[image: shot.png]');
+  assert.ok(!readFileSync(join(dir, 'data', 'sessions', `${session.data.id}.jsonl`), 'utf8').includes('base64'), 'base64 is never persisted');
+});
+
+test('web chat rejects unsupported, oversized and excessive images', async (t) => {
+  const provider = await startFakeProvider([[textChunk('ok'), finishChunk('stop')]]);
+  t.after(() => provider.close());
+  const { json } = await setup(t, {
+    baseUrl: provider.baseUrl,
+    config: { images: { maxBytes: 1024 } }
+  });
+  const session = await json('/api/sessions', { method: 'POST', body: {} });
+
+  const unsupported = await json('/api/chat', {
+    method: 'POST',
+    body: { sessionId: session.data.id, message: 'look', images: [{ name: 'x.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' }] }
+  });
+  assert.equal(unsupported.status, 400);
+  assert.match(unsupported.data.error, /PNG, JPEG or WebP/);
+
+  const big = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.alloc(2000)]);
+  const oversized = await json('/api/chat', {
+    method: 'POST',
+    body: { sessionId: session.data.id, message: 'look', images: [{ name: 'big.png', dataUrl: `data:image/png;base64,${big.toString('base64')}` }] }
+  });
+  assert.equal(oversized.status, 413);
+  assert.match(oversized.data.error, /limit is 1.0 KiB/);
+
+  const tooMany = await json('/api/chat', {
+    method: 'POST',
+    body: {
+      sessionId: session.data.id,
+      message: 'look',
+      images: Array.from({ length: 5 }, (_, index) => ({ name: `${index}.png`, dataUrl: PNG_DATA_URL }))
+    }
+  });
+  assert.equal(tooMany.status, 413);
+  assert.match(tooMany.data.error, /Too many images/);
+  assert.equal(provider.requests.length, 0, 'invalid uploads never reach the provider');
 });
 
 test('compaction is streamed and persisted with the transcript', async (t) => {
@@ -320,6 +399,36 @@ test('tool calls are executed, audited and streamed over the API', async (t) => 
   assert.equal(failed.data.total, 0);
 });
 
+test('audit entries can be pruned by age', async (t) => {
+  const { dir, json } = await setup(t);
+  const now = Date.now();
+  const old = new Date(now - 10 * 7 * 24 * 60 * 60 * 1000).toISOString();
+  const recent = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  writeFileSync(
+    join(dir, 'data', 'audit.jsonl'),
+    [
+      JSON.stringify({ ts: old, tool: 'old_tool', ok: true, durationMs: 1 }),
+      JSON.stringify({ ts: recent, tool: 'recent_tool', ok: true, durationMs: 1 })
+    ].join('\n') + '\n'
+  );
+
+  for (const query of ['', '?olderThanWeeks=0', '?olderThanWeeks=10', '?olderThanWeeks=nope']) {
+    const invalid = await json(`/api/audit${query}`, { method: 'DELETE' });
+    assert.equal(invalid.status, 400, query || 'missing olderThanWeeks');
+  }
+
+  const pruned = await json('/api/audit?olderThanWeeks=4', { method: 'DELETE' });
+  assert.equal(pruned.status, 200, JSON.stringify(pruned.data));
+  assert.equal(pruned.data.olderThanWeeks, 4);
+  assert.equal(pruned.data.removed, 1);
+  assert.equal(pruned.data.kept, 1);
+  assert.ok(pruned.data.cutoff);
+
+  const audit = await json('/api/audit');
+  assert.equal(audit.data.total, 1);
+  assert.equal(audit.data.entries[0].tool, 'recent_tool');
+});
+
 test('approval pauses the turn until the browser approves', async (t) => {
   const provider = await startFakeProvider([
     [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"protected.txt","content":"approved"}' }), finishChunk('tool_calls')],
@@ -406,6 +515,9 @@ test('a running turn reports busy and can be aborted', async (t) => {
 
   const deleteBusy = await json(`/api/sessions/${session.data.id}`, { method: 'DELETE' });
   assert.equal(deleteBusy.status, 409, 'cannot delete while a turn is running');
+
+  const pruneBusy = await json('/api/audit?olderThanWeeks=4', { method: 'DELETE' });
+  assert.equal(pruneBusy.status, 409, 'cannot prune the audit log while a turn is running');
 
   const abort = await json('/api/chat/abort', { method: 'POST', body: { sessionId: session.data.id } });
   assert.equal(abort.status, 200);
@@ -555,6 +667,7 @@ test('memory disabled turns off facts, sessions and the audit API', async (t) =>
 
   assert.equal((await json('/api/facts')).status, 400);
   assert.equal((await json('/api/audit')).status, 400);
+  assert.equal((await json('/api/audit?olderThanWeeks=4', { method: 'DELETE' })).status, 400);
   assert.equal((await json('/api/sessions/whatever', { method: 'DELETE' })).status, 400);
   const sessions = await json('/api/sessions');
   assert.deepEqual(sessions.data, { memoryEnabled: false, sessions: [] });

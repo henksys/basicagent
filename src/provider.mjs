@@ -80,7 +80,13 @@ export class Provider {
     }
     if (!response.ok) {
       const text = bounded(await response.text().catch(() => ''), 2000);
-      throw new ProviderError(`Provider HTTP ${response.status}: ${text}`);
+      const hasImages = messages.some(
+        (message) => Array.isArray(message?.content) && message.content.some((part) => part?.type === 'image_url')
+      );
+      const hint = hasImages
+        ? '\nHint: the selected model or server may not support image input.'
+        : '';
+      throw new ProviderError(`Provider HTTP ${response.status}: ${text}${hint}`);
     }
     return this.#readStream(response, { onDelta, signal });
   }

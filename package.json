@@ -1,7 +1,7 @@
 {
   "name": "basicagent",
-  "version": "1.5.2",
-  "description": "A scriptable and interactive command line agent with web-interface, file tools, web-fetch, skills, and OpenAI-compatible LLM providers.",
+  "version": "1.7.0",
+  "description": "A scriptable and interactive command line agent with web-interface, file tools, web-fetch, skills, image input, and OpenAI-compatible LLM providers.",
   "type": "module",
   "bin": {
     "basicagent": "bin/basicagent.mjs",
@@ -22,6 +22,7 @@
     "cli",
     "ollama",
     "openai-compatible",
+    "vision",
     "tools"
   ],
   "repository": {

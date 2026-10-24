@@ -21,6 +21,11 @@ test('defaults load when no config file exists', () => {
     assert.equal(config.agent.compact, 'summarize');
     assert.equal(config.agent.compactAt, 0.8);
     assert.equal(config.agent.toolCircuitBreaker.failureThreshold, 3);
+    assert.equal(config.images.enabled, true);
+    assert.equal(config.images.maxImages, 4);
+    assert.equal(config.images.maxBytes, 5 * 1024 * 1024);
+    assert.equal(config.images.detail, 'auto');
+    assert.equal(config.images.tokensPerImage, 1200);
     assert.equal(config.tools.readOnly, false, 'read-only mode is off by default');
     assert.ok(config.tools.shell.readOnlyAllowlist.includes('date'));
     assert.ok(config.tools.shell.readOnlyAllowlist.includes('systemctl status'));
@@ -45,6 +50,8 @@ test('config file values merge over defaults', () => {
     assert.equal(config.provider.model, 'gemma4:31b');
     assert.equal(config.provider.baseUrl, 'https://ollama.com/v1');
     assert.equal(config.provider.temperature, 0.2, 'untouched defaults survive');
+    assert.equal(config.images.maxImages, 4, 'old configs get the new image defaults');
+    assert.equal(config.images.maxBytes, 5 * 1024 * 1024);
     assert.equal(config.paths.configFound, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -112,6 +119,16 @@ test('invalid values are rejected with clear errors', () => {
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /toolCircuitBreaker/);
     writeFileSync(configPath, JSON.stringify({ tools: { readOnly: 'yes' } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /tools\.readOnly/);
+    writeFileSync(configPath, JSON.stringify({ images: { maxImages: 0 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /images\.maxImages/);
+    writeFileSync(configPath, JSON.stringify({ images: { maxBytes: 10 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /images\.maxBytes/);
+    writeFileSync(configPath, JSON.stringify({ images: { detail: 'huge' } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /images\.detail/);
+    writeFileSync(configPath, JSON.stringify({ images: { tokensPerImage: 0 } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /images\.tokensPerImage/);
+    writeFileSync(configPath, JSON.stringify({ images: { enabled: 'yes' } }));
+    assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /images\.enabled/);
     writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: 'date' } } }));
     assert.throws(() => loadConfig({ flags: { config: configPath }, env: {}, cwd: dir }), /readOnlyAllowlist/);
     writeFileSync(configPath, JSON.stringify({ tools: { shell: { readOnlyAllowlist: [''] } } }));

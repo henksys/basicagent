@@ -516,6 +516,28 @@ code {
 }
 
 .composer { border-top: 1px solid var(--border); padding: 0.9rem 1.2rem 1.1rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--surface); }
+.composer.dragover { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.attachment { position: relative; width: 72px; height: 72px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); overflow: hidden; background: var(--bg); }
+.attachment-image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.66);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.attachment-remove:hover { background: var(--error); }
+.msg-images { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.7rem; }
+.msg-image { max-width: min(100%, 360px); max-height: 260px; border-radius: var(--r-sm); border: 1px solid var(--border); object-fit: contain; background: var(--bg); }
 .composer textarea {
   width: 100%;
   resize: vertical;
@@ -529,7 +551,7 @@ code {
   padding: 0.7rem 0.85rem;
 }
 .composer textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
-.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; }
+.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; flex-wrap: wrap; }
 .readonly-toggle {
   display: inline-flex;
   align-items: center;

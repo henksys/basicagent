@@ -39,6 +39,12 @@ import {
   trimHistory
 } from './context.mjs';
 import {
+  DEFAULT_IMAGE_DETAIL,
+  DEFAULT_IMAGE_MAX_COUNT,
+  DEFAULT_IMAGE_TOKENS,
+  buildUserContent
+} from './images.mjs';
+import {
   SUMMARY_MAX_TOKENS,
   buildSummaryRequest,
   findSummaryCut,
@@ -96,6 +102,9 @@ export class Agent {
     this.usageAnchor = null;
     this.compactionFailureNotice = false;
     this.toolSchemaCache = null;
+    // Image cost is a budgeting concern, not a provider field. See context.mjs.
+    this.imageTokens = config.images?.tokensPerImage ?? DEFAULT_IMAGE_TOKENS;
+    this.imageDetail = config.images?.detail ?? DEFAULT_IMAGE_DETAIL;
   }
 
   setSystem(text) {
@@ -126,9 +135,9 @@ export class Agent {
   // is exact; otherwise this is the byte-based estimate from context.mjs.
   contextTokens() {
     if (this.usageAnchor && this.usageAnchor.count <= this.messages.length) {
-      return this.usageAnchor.tokens + estimateMessagesTokens(this.messages.slice(this.usageAnchor.count));
+      return this.usageAnchor.tokens + estimateMessagesTokens(this.messages.slice(this.usageAnchor.count), { imageTokens: this.imageTokens });
     }
-    return this.#overheadTokens() + estimateMessagesTokens(this.messages);
+    return this.#overheadTokens() + estimateMessagesTokens(this.messages, { imageTokens: this.imageTokens });
   }
 
   // Manually summarize old history. Used by the REPL's /compact command; the
@@ -138,8 +147,25 @@ export class Agent {
   }
 
   // Run one user turn. Resolves with { text, messages }.
-  async run(input, { signal } = {}) {
-    this.messages.push({ role: 'user', content: input });
+  // `images` is an array of attachments from images.mjs; text-only callers can
+  // keep passing just the string.
+  async run(input, { signal, images = [] } = {}) {
+    const attachments = Array.isArray(images) ? images : [];
+    if (attachments.length) {
+      if (this.config.images?.enabled === false) {
+        throw new AgentError('Image input is disabled in the configuration (images.enabled)');
+      }
+      const maxImages = this.config.images?.maxImages ?? DEFAULT_IMAGE_MAX_COUNT;
+      if (attachments.length > maxImages) {
+        throw new AgentError(`Too many images: ${attachments.length} attached; the limit is ${maxImages} (images.maxImages)`);
+      }
+    }
+    this.messages.push({
+      role: 'user',
+      content: attachments.length
+        ? buildUserContent(input, attachments, { detail: this.imageDetail })
+        : input
+    });
     const limits = this.config.agent;
     const failureLimit = limits.toolCircuitBreaker?.failureThreshold ?? 3;
     let lastFailure = { key: '', count: 0 };
@@ -257,7 +283,8 @@ export class Agent {
       system: this.system,
       summary: this.summary,
       tools: this.#schemas(),
-      messages: []
+      messages: [],
+      imageTokens: this.imageTokens
     });
   }
 
@@ -277,14 +304,14 @@ export class Agent {
       const compacted = await this.#summarizeOldMessages({ signal, iteration });
       if (compacted) {
         if (this.contextTokens() > limit) {
-          this.messages = trimHistory(this.messages, limit, this.#overheadTokens());
+          this.messages = trimHistory(this.messages, limit, this.#overheadTokens(), { imageTokens: this.imageTokens });
           this.usageAnchor = null;
         }
         return;
       }
     }
     if (this.contextTokens() > limit) {
-      this.messages = trimHistory(this.messages, limit, this.#overheadTokens());
+      this.messages = trimHistory(this.messages, limit, this.#overheadTokens(), { imageTokens: this.imageTokens });
       this.usageAnchor = null;
     }
   }
@@ -295,7 +322,10 @@ export class Agent {
   // turn.
   async #summarizeOldMessages({ signal, iteration } = {}) {
     const limits = this.config.agent;
-    const cut = findSummaryCut(this.messages, { contextTokens: limits.contextTokens });
+    const cut = findSummaryCut(this.messages, {
+      contextTokens: limits.contextTokens,
+      imageTokens: this.imageTokens
+    });
     if (cut <= 0) return false;
 
     const prefix = this.messages.slice(0, cut);

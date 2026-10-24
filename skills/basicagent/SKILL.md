@@ -37,6 +37,10 @@ Env overrides: `BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`, `BASICAGENT_MODEL`,
   `apiKeyEnv` (name of an environment variable), `temperature`, `maxTokens`
   (optional cap on one reply; unset means the provider's own default is used),
   `timeoutMs`, `toolChoice` (omit it for Ollama).
+- `images`: `enabled`, `maxImages` (default 4), `maxBytes` (default 5 MiB),
+  `detail` (`auto` / `low` / `high`), `tokensPerImage` (budget estimate only;
+  default 1200). Only PNG, JPEG and WebP are accepted; the model must be
+  multimodal.
 - `agent`: `maxIterations`, `contextTokens` (budget for the whole prompt —
   system prompt, tools, summary and messages — not the model's context window),
   `compact` (`summarize` or `off`), `compactAt` (fraction of the budget at
@@ -111,8 +115,11 @@ Precedence: defaults < config file < environment < CLI flags.
 
 Facts saved with `remember` appear in every future prompt; `search_memory` finds
 past records and `forget` removes them. `--continue` resumes the last session's
-user/assistant text only (no tool traffic); `--session <id>` pins a named
+user/assistant text only (no tool traffic, and attached images are represented
+by their `[image: filename]` marker); `--session <id>` pins a named
 conversation; `--ephemeral` disables memory entirely. The web interface's
+Memory tab can delete facts, sessions, and audit entries older than 1–9 weeks.
+Audit pruning is a human web action, not a tool available to you. The web interface's
 Memory tab lists facts (add and delete), session transcripts and the audit
 log; each web turn re-reads `facts.jsonl` so tabs stay in sync.
 
@@ -123,16 +130,20 @@ REPL: `basicagent`. One-shot: `basicagent "prompt"`. Web interface:
 and opens it in the default browser (`--no-open` skips that); `--port`,
 `--host` and `--token` adjust it. Guided configuration: `basicagent-setup`
 (provider, model, key, shell access, config/data dirs; tests the provider and
-can start the web interface). Scripting:
+can start the web interface). The web composer attaches PNG/JPEG/WebP images
+with its button, drag-and-drop or paste; the model must support vision.
+Scripting:
 `basicagent --json "prompt"` emits JSONL events (`assistant_delta`,
 `tool_start`, `tool_end`, `done`, `error`, `approval`). The web interface
 streams the same events plus `approval_result` and `aborted`; there the
 `approval` event carries an `id` answered with `POST /api/approvals/:id`.
 Handy flags: `--no-web` (disable web fetch for one run), `--read-only`
 (no file writes; shell limited to the allowlist), `--no-read-only` (override a
-config default), `--no-color` (disable ANSI colors), `--continue`,
+config default), `--image <file>` / `-i` (attach PNG/JPEG/WebP for a vision
+model; repeatable), `--no-color` (disable ANSI colors), `--continue`,
 `--session <id>`, `--ephemeral`. REPL commands: `/help /new /reload /skills
-/tools /model [name] /context /compact /readonly [on|off] /config /quit`.
+/tools /model [name] /context /compact /image [path|clear] /readonly [on|off]
+/config /quit`.
 
 ## Skills
 

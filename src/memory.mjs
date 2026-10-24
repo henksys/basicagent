@@ -21,8 +21,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { bounded } from './util.mjs';
+import { contentToText } from './images.mjs';
 
 const MAX_EVENT_BYTES = 24000;
+
+// Manual audit-log pruning is deliberately limited to a small range. Keeping
+// the list short avoids a dangerous "delete everything" control.
+export const AUDIT_PRUNE_MAX_WEEKS = 9;
 
 export function sanitizeSessionId(input) {
   const id = String(input ?? '').trim().replace(/[^A-Za-z0-9._-]/g, '-');
@@ -203,10 +208,59 @@ export class Memory {
     if (Array.isArray(recentMessages)) {
       entry.recent = recentMessages
         .filter((message) => (message?.role === 'user' || message?.role === 'assistant') && message.content)
-        .map((message) => ({ role: message.role, content: bounded(String(message.content), MAX_EVENT_BYTES) }));
+        .map((message) => ({ role: message.role, content: bounded(contentToText(message.content), MAX_EVENT_BYTES) }));
     }
     this.buffer.push(entry);
     writeFileSync(join(this.sessionsDir, `${this.sessionId}.jsonl`), JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
+  }
+
+  // Delete audit entries older than a number of weeks. This is the one
+  // maintenance operation that rewrites audit.jsonl: the log is append-only
+  // during normal turns. Entries with a missing or invalid timestamp are kept
+  // because they cannot be dated safely, and malformed lines are preserved.
+  // The rewrite is atomic, so a crash cannot leave a truncated audit log.
+  // The web API refuses to run this while one of its sessions is busy; a
+  // separate CLI process writing at the same moment is the same shared-file
+  // race the other JSONL stores already accept.
+  pruneAudit({ olderThanWeeks, now = new Date() } = {}) {
+    const weeks = Number(olderThanWeeks);
+    if (!Number.isInteger(weeks) || weeks < 1 || weeks > AUDIT_PRUNE_MAX_WEEKS) {
+      throw new Error(`olderThanWeeks must be an integer from 1 to ${AUDIT_PRUNE_MAX_WEEKS}`);
+    }
+    const cutoffMs = now.getTime() - weeks * 7 * 24 * 60 * 60 * 1000;
+    const result = {
+      olderThanWeeks: weeks,
+      cutoff: new Date(cutoffMs).toISOString(),
+      removed: 0,
+      kept: 0
+    };
+    if (!existsSync(this.auditPath)) return result;
+
+    const keptLines = [];
+    for (const line of readFileSync(this.auditPath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let entry = null;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        // Keep damaged lines: silently deleting undated records would make
+        // the audit log less trustworthy, not cleaner.
+      }
+      const timestamp = entry && typeof entry.ts === 'string' ? Date.parse(entry.ts) : NaN;
+      if (Number.isFinite(timestamp) && timestamp < cutoffMs) {
+        result.removed++;
+      } else {
+        keptLines.push(line);
+        result.kept++;
+      }
+    }
+
+    if (result.removed > 0) {
+      const tmp = `${this.auditPath}.tmp`;
+      writeFileSync(tmp, keptLines.join('\n') + (keptLines.length ? '\n' : ''), { mode: 0o600 });
+      renameSync(tmp, this.auditPath);
+    }
+    return result;
   }
 
   // Facts ------------------------------------------------------------------

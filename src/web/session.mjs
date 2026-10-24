@@ -29,6 +29,7 @@ import { Provider } from '../provider.mjs';
 import { discoverSkills } from '../skills.mjs';
 import { createRegistry } from '../tools/index.mjs';
 import { collapseWhitespace } from '../util.mjs';
+import { formatUserEvent } from '../images.mjs';
 
 export const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -87,8 +88,9 @@ export class WebSession {
   }
 
   // Run one user turn, forwarding every agent event to `emit`. Only one turn
-  // may run per session at a time.
-  async runTurn(input, emit) {
+  // may run per session at a time. `images` are validated attachments from
+  // images.mjs; they are never written to the session file as base64.
+  async runTurn(input, emit, { images = [] } = {}) {
     if (this.busy) {
       const error = new Error('A turn is already running in this session');
       error.status = 409;
@@ -108,8 +110,8 @@ export class WebSession {
       this.memory?.reloadFacts();
       this.agent.setReadOnly(this.readOnly);
       this.#refreshSystemPrompt();
-      this.memory?.appendEvent('user', input);
-      const result = await this.agent.run(input, { signal: this.controller.signal });
+      this.memory?.appendEvent('user', images.length ? formatUserEvent(input, images) : input);
+      const result = await this.agent.run(input, { signal: this.controller.signal, images });
       this.memory?.appendEvent('assistant', result.text);
       return result;
     } finally {

@@ -94,8 +94,11 @@
           <div class="messages" id="messages" aria-live="polite"></div>
           <form class="composer" id="composer">
             <label class="sr-only" for="prompt">Message</label>
+            <div class="composer-attachments" id="pending-images" hidden></div>
             <textarea id="prompt" rows="3" placeholder="Ask basicagent… (Enter to send, Shift+Enter for a newline)"></textarea>
             <div class="composer-actions">
+              <button type="button" class="btn btn-small btn-ghost" id="attach-image" hidden title="Attach PNG, JPEG or WebP images">Attach image</button>
+              <input type="file" id="image-input" accept="image/png,image/jpeg,image/webp" multiple hidden>
               <label class="readonly-toggle" title="Read-only tool mode: file writes and non-allowlisted shell commands are disabled. Memory tools remain available.">
                 <input type="checkbox" id="readonly-toggle" disabled>
                 <span>Read-only</span>
@@ -201,6 +204,40 @@
                 <span>Custom system prompt <span class="form-hint">(empty = built-in persona)</span></span>
                 <textarea data-config="agent.systemPrompt" rows="4" placeholder="You are basicagent…"></textarea>
               </label>
+            </div>
+          </section>
+
+          <section class="card panel">
+            <div class="panel-head"><h2>Images</h2></div>
+            <div class="panel-body form-grid">
+              <label class="form-field checkbox-field span-2">
+                <input data-config="images.enabled" type="checkbox">
+                <span>Enable image attachments <span class="form-hint">(PNG, JPEG and WebP for vision models)</span></span>
+              </label>
+              <label class="form-field">
+                <span>Max images per message</span>
+                <input data-config="images.maxImages" data-number="true" inputmode="numeric" placeholder="4">
+              </label>
+              <label class="form-field">
+                <span>Max bytes per image</span>
+                <input data-config="images.maxBytes" data-number="true" inputmode="numeric" placeholder="5242880">
+              </label>
+              <label class="form-field">
+                <span>Image detail</span>
+                <select data-config="images.detail">
+                  <option value="auto">auto (provider default)</option>
+                  <option value="low">low</option>
+                  <option value="high">high</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Tokens per image <span class="form-hint">(budget estimate only)</span></span>
+                <input data-config="images.tokensPerImage" data-number="true" inputmode="numeric" placeholder="1200">
+              </label>
+              <p class="form-note span-2">
+                Images are base64-encoded and sent as OpenAI <code>image_url</code> content parts, so the model must support vision.
+                The token estimate is used for the context gauge and compaction; the provider's actual charge depends on its vision encoder.
+              </p>
             </div>
           </section>
 
@@ -430,6 +467,22 @@
             </select>
             <button type="button" class="btn btn-small btn-ghost" id="audit-refresh">Refresh</button>
             <span class="filters-count" id="audit-count"></span>
+          </div>
+          <div class="filters" id="audit-prune-row">
+            <label class="sr-only" for="audit-prune-weeks">Delete audit entries older than</label>
+            <select id="audit-prune-weeks">
+              <option value="1">older than 1 week</option>
+              <option value="2">older than 2 weeks</option>
+              <option value="3">older than 3 weeks</option>
+              <option value="4">older than 4 weeks</option>
+              <option value="5">older than 5 weeks</option>
+              <option value="6">older than 6 weeks</option>
+              <option value="7">older than 7 weeks</option>
+              <option value="8" selected>older than 8 weeks</option>
+              <option value="9">older than 9 weeks</option>
+            </select>
+            <button type="button" class="btn btn-small btn-ghost" id="audit-prune">Delete older entries</button>
+            <span class="filters-count">applies to the whole audit log</span>
           </div>
           <div class="table-scroll">
             <table class="table">

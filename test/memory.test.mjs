@@ -88,8 +88,64 @@ test('the newest summary is persisted with its kept tail and replayed on resume'
   assert.deepEqual(summaries[0].recent, [{ role: 'user', content: 'new question' }]);
 });
 
-test('deleteSession removes the file and keeps the continue pointer valid', (t) => {
+test('summary tails store image placeholders instead of base64', (t) => {
   const { dir, memory } = makeMemory(t);
+  const id = memory.startSession('20260101000000-imgg');
+  memory.appendSummary({
+    summary: 'summary',
+    messagesSummarized: 1,
+    tokensBefore: 10,
+    tokensAfter: 5,
+    summaryTokens: 2
+  }, [{
+    role: 'user',
+    content: [
+      { type: 'text', text: 'what is this?' },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(1000)}` } }
+    ]
+  }]);
+
+  const lines = readFileSync(join(dir, 'sessions', `${id}.jsonl`), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(lines[0].recent[0].content, 'what is this?\n[image]');
+  assert.ok(!JSON.stringify(lines[0]).includes('base64'));
+});
+
+test('pruneAudit removes old dated entries and keeps undated ones', (t) => {
+  const { dir, memory } = makeMemory(t);
+  const now = new Date('2026-10-24T12:00:00.000Z');
+  const missing = memory.pruneAudit({ olderThanWeeks: 4, now });
+  assert.equal(missing.removed, 0);
+  assert.equal(missing.kept, 0);
+
+  const lines = [
+    { ts: '2026-08-01T00:00:00.000Z', tool: 'ancient' },
+    { ts: '2026-09-01T00:00:00.000Z', tool: 'old' },
+    { ts: '2026-10-20T00:00:00.000Z', tool: 'recent' },
+    { tool: 'undated' },
+    'not json'
+  ];
+  writeFileSync(
+    join(dir, 'audit.jsonl'),
+    lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n') + '\n'
+  );
+
+  const result = memory.pruneAudit({ olderThanWeeks: 4, now });
+  assert.equal(result.removed, 2);
+  assert.equal(result.kept, 3);
+  assert.equal(result.olderThanWeeks, 4);
+  assert.equal(result.cutoff, '2026-09-26T12:00:00.000Z');
+
+  const remaining = readFileSync(join(dir, 'audit.jsonl'), 'utf8').trim().split('\n');
+  assert.equal(remaining.length, 3);
+  assert.match(remaining[0], /recent/);
+  assert.match(remaining[1], /undated/);
+  assert.equal(remaining[2], 'not json', 'malformed lines are preserved');
+
+  assert.throws(() => memory.pruneAudit({ olderThanWeeks: 0, now }), /1 to 9/);
+  assert.throws(() => memory.pruneAudit({ olderThanWeeks: 10, now }), /1 to 9/);
+});
+
+test('deleteSession removes the file and keeps the continue pointer valid', (t) => {  const { dir, memory } = makeMemory(t);
   const a = memory.startSession('20260101000000-aaaa');
   const b = memory.startSession('20260102000000-bbbb');
   const c = memory.startSession('20260103000000-cccc');

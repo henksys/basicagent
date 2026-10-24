@@ -37,6 +37,41 @@ async function runCli(args, { cwd }) {
 
 const parseJSONL = (text) => text.split('\n').filter(Boolean).map((line) => JSON.parse(line));
 
+const pngBytes = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+
+test('one-shot --image sends an OpenAI image content part', async (t) => {
+  const server = await startFakeProvider([
+    [textChunk('It is a screenshot.'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'shot.png'), pngBytes);
+
+  const result = await runCli(['--config', configPath, '--json', '--image', 'shot.png', 'what is this'], { cwd: dir });
+  assert.equal(result.code, 0, result.stderr);
+  const user = server.requests[0].messages.find((message) => message.role === 'user');
+  assert.ok(Array.isArray(user.content));
+  assert.deepEqual(user.content[0], { type: 'text', text: 'what is this' });
+  assert.equal(user.content[1].type, 'image_url');
+  assert.match(user.content[1].image_url.url, /^data:image\/png;base64,/);
+});
+
+test('one-shot --image rejects an oversized image before calling the provider', async (t) => {
+  const server = await startFakeProvider([
+    [textChunk('should not run'), finishChunk('stop')]
+  ]);
+  t.after(() => server.close());
+  const { dir, configPath } = makeWorkspace(server, { images: { maxBytes: 1024 } });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'big.png'), Buffer.concat([pngBytes, Buffer.alloc(2000)]));
+
+  const result = await runCli(['--config', configPath, '--json', '--image', 'big.png', 'look'], { cwd: dir });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /limit is 1\.0 KiB/);
+  assert.equal(server.requests.length, 0, 'the provider was never called');
+});
+
 test('one-shot --json runs a tool call and reports done', async (t) => {
   const server = await startFakeProvider([
     [toolChunk({ index: 0, id: 'c1', name: 'write_file', args: '{"path":"hello.txt","content":"hi from agent"}' }), finishChunk('tool_calls')],

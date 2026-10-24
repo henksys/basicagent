@@ -17,9 +17,9 @@ toolset is deliberately small:
 - web fetch with SSRF and domain protection
 - SKILL.md skills and persistent JSONL memory
 
-**Size:** less then 1 mb. The agent itself is about 7,500 lines of source (CLI, core and web
-interface). The test suite adds about 3,300 lines; together they are about
-10,800. Node.js 24+ built-ins are the only requirement: no external
+**Size:** less then 1 mb. The agent itself is about 8,100 lines of source (CLI, core and web
+interface). The test suite adds about 3,600 lines; together they are about
+11,700. Node.js 24+ built-ins are the only requirement: no external
 dependencies and no build step.
 
 Security is deliberately visible and configurable: tools can be enabled,
@@ -35,6 +35,7 @@ It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or new
 ## Features
 
 - **OpenAI-compatible providers** — Ollama, Ollama Cloud, llama.cpp, DeepSeek, OpenAI.
+- **Image input for vision models** — attach PNG, JPEG or WebP from the CLI or web interface.
 - **Interactive and scriptable** — REPL, instant one-shot runs, JSON-lines output, and a fast local web interface.
 - **Lean, skill-based toolset** — file tools, shell, web fetch, SKILL.md skills and persistent JSONL memory.
 - **Configurable safety** — file-root policies, approval prompts, read-only tool mode with a shell allowlist, SSRF protection and an audit log.
@@ -83,16 +84,39 @@ The UI has three tabs:
   context gauge shows how full the whole-prompt token budget
   (`agent.contextTokens`) is — not the model's context window. Compaction
   points appear in the transcript with the summary available to inspect. A
-  per-conversation **Read-only** toggle sits in the composer.
-- **Settings** — edits the same `config.json` the CLI reads (provider, agent
-  limits, file roots, shell, web tool, skills, memory) plus an Advanced section
+  per-conversation **Read-only** toggle sits in the composer. Images can be
+  attached with the composer button, dragged in or pasted; the model must
+  support vision.
+- **Settings** — edits the same `config.json` the CLI reads (provider, images,
+  agent limits, file roots, shell, web tool, skills, memory) plus an Advanced section
   for read-only mode and the tool-breaker threshold. Saving validates the
   result, writes the file atomically and live-reloads the agent. The API key
   is never sent to the browser; leave the field empty to keep it. The chat
   window also has a per-conversation **Read-only** toggle; the Settings
   checkbox supplies the default for new conversations.
-- **Memory** — facts (add/delete), session transcripts and the audit log,
-  all straight from the JSONL files.
+- **Memory** — facts (add/delete), session transcripts and a filterable audit
+  log with manual age-based pruning, all straight from the JSONL files.
+
+## Images
+
+Vision-capable models can inspect **PNG, JPEG and WebP** images. The supported
+file extensions are `.png`, `.jpg`, `.jpeg` and `.webp`; JPG and JPEG are the
+same format. Files are identified by their content, not their extension.
+GIF, BMP, TIFF, HEIC, AVIF, SVG, ICO, JPEG XL, RAW and PDF are not supported.
+The image is base64-encoded and sent as a standard OpenAI `image_url` content
+part, which works with OpenAI-compatible cloud APIs, Ollama and llama.cpp.
+
+```sh
+basicagent --image screenshot.png "What error is shown here?"
+basicagent -i before.webp -i after.webp "What changed?"
+```
+
+In the REPL, `/image path` queues an image for the next message; `/image`
+lists pending attachments and `/image clear` removes them. The web composer
+accepts the same formats through its attach button, drag-and-drop or paste.
+Images are limited to 4 per message and 5 MiB each by default (`images` in the
+config). The model itself must support vision; otherwise the provider returns
+an error and Basicagent explains the likely cause.
 
 ## Documentation
 
@@ -121,6 +145,7 @@ basicagent [options] [prompt]
                     (default $XDG_DATA_HOME/basicagent, or ~/.local/share/basicagent)
   --model <name>    override the model
   --base-url <url>  override the provider URL
+  --image, -i <file> attach an image (PNG/JPEG/WebP; repeatable)
   --continue        resume the most recent session
   --session <id>    use a named session
   --ephemeral       disable memory for this run
@@ -134,7 +159,7 @@ basicagent [options] [prompt]
 ```
 
 REPL commands: `/help /new /reload /skills /tools /model [name] /context
-/compact /readonly [on|off] /config /quit`.
+/compact /image [path|clear] /readonly [on|off] /config /quit`.
 
 The web server is a separate command:
 

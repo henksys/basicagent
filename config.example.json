@@ -9,6 +9,13 @@
     "toolChoice": null,
     "includeUsage": false
   },
+  "images": {
+    "enabled": true,
+    "maxImages": 4,
+    "maxBytes": 5242880,
+    "detail": "auto",
+    "tokensPerImage": 1200
+  },
   "agent": {
     "maxIterations": 25,
     "contextTokens": 24000,

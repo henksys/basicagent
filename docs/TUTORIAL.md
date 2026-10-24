@@ -159,6 +159,10 @@ about **1,900 tokens** before the first message (roughly 600 for the system
 prompt and 1,300 for the tool schemas), so the Web UI gauge starts around 8% of
 a 24k budget. That is the real prompt size, not an overhead bug. Saved facts
 can add up to ~1,000 tokens and each compaction summary is counted too.
+Attached images are counted as `images.tokensPerImage` (default **1,200** each),
+not as their base64 size; raise it if your model's vision encoder is expensive.
+An image turn that is summarized away stops costing image tokens, but while it
+remains in recent history every tool iteration re-sends it.
 
 #### Why the budget is smaller than the window
 
@@ -234,7 +238,7 @@ basicagent
 ```
 
 ```
-basicagent 1.5.2
+basicagent 1.7.0
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 readonly  off
@@ -261,6 +265,7 @@ Commands:
 | `/model [name]` | Show or change the model for this session |
 | `/context` | Show the current context size, budget, message count and summary state |
 | `/compact` | Summarize older turns now |
+| `/image [path\|clear]` | Attach an image (PNG/JPEG/WebP) to the next message; list or clear attachments |
 | `/readonly` | [on or off] Show or change read-only tool mode for this session |
 | `/config` | Show the resolved config with the API key masked |
 | `/quit` | Exit (Ctrl+D works too) |
@@ -269,7 +274,68 @@ Ctrl+C cancels the running turn, not the program. In a terminal the
 `basicagent` part of the prompt is cyan, matching tool-call labels;
 `--no-color` or `NO_COLOR=1` disables color.
 
-## 5. Use the web interface
+## 5. Images
+
+If the model supports vision, Basicagent can send images with a prompt.
+These are the only supported formats:
+
+| Format | Extensions | MIME type |
+| --- | --- | --- |
+| PNG | `.png` | `image/png` |
+| JPEG | `.jpg`, `.jpeg` | `image/jpeg` |
+| WebP | `.webp` | `image/webp` |
+
+JPG and JPEG are the same format. Files are identified by their content (magic
+bytes), not their extension, so an oddly named file still works if it really is
+PNG, JPEG or WebP. GIF, BMP, TIFF, HEIC, AVIF, SVG, ICO, JPEG XL, RAW and PDF
+are **not** supported; there is no conversion or resizing.
+
+These three formats are the intersection accepted by OpenAI, Ollama and
+llama.cpp. The original bytes are base64-encoded and sent as a standard OpenAI
+`image_url` content part; no external tool is needed.
+
+One-shot:
+
+```sh
+basicagent --image screenshot.png "What does this error mean?"
+basicagent -i before.jpg -i after.jpg "Describe what changed between these two."
+```
+
+REPL:
+
+```text
+basicagent> /image ~/Pictures/screenshot.png
+Attached image: screenshot.png (image/png, 412.3 KiB). It will be sent with your next message.
+basicagent> What is shown in this screenshot?
+```
+
+`/image` without an argument lists pending images, and `/image clear` removes
+them. The attachment is consumed by the next message, so you can queue several
+images (up to 4 by default) before asking a question.
+
+Photos, screenshots and diagrams work well. The model does OCR itself if it has
+that capability; Basicagent does not run a separate OCR tool. The model must be
+multimodal: `qwen3-vl`, Gemma vision models, and similar. A text-only model
+returns an error from the provider, and Basicagent adds a hint that the model
+or server may not support images.
+
+Notes:
+
+- Defaults are 4 images per message and 5 MiB per image. Change them in the
+  `images` section of the config.
+- Image tokens depend on the provider's vision encoder, not on the base64 file
+  size. The default budget estimate is 1,200 tokens per image; adjust
+  `images.tokensPerImage` if your model uses a different amount. The context
+  gauge and compaction use that estimate.
+- Ollama accepts base64 image parts only (no remote URLs), and its OpenAI
+  compatibility layer accepts `jpeg`, `png` and `webp`.
+- llama.cpp needs a multimodal projector (`--mmproj`) to process images.
+- Session files store only `[image: filename]` markers. Resuming a session does
+  not re-send old images.
+- A 50 MiB image is rejected before upload/reading with a clear size error.
+  Resize or crop it first, or explicitly raise `images.maxBytes`.
+
+## 6. Use the web interface
 
 basicagent also ships a browser interface for the same agent (the setup in
 section 1 can start it for you):
@@ -294,9 +360,12 @@ too. The interface has three tabs:
   points appear in the transcript, with the summary available to inspect. The
   composer also has a per-conversation **Read-only** toggle: file writes and
   non-allowlisted shell commands are disabled, while read, web, skill and
-  memory tools remain available.
+  memory tools remain available. Use **Attach image**, drag an image onto the
+  composer or paste one from the clipboard; thumbnails appear above the
+  message box and can be removed before sending. Only PNG, JPEG and WebP are
+  accepted.
 - **Settings** — edits the same `~/.config/basicagent/config.json` (provider,
-  agent limits, file roots, shell, web tool, skills, memory). The **Advanced**
+  images, agent limits, file roots, shell, web tool, skills, memory). The **Advanced**
   card contains the read-only default, the shell allowlist for read-only mode,
   and the tool-call breaker threshold. The read-only checkbox sets the default
   for new conversations; a live conversation keeps its composer toggle. Saving
@@ -304,7 +373,8 @@ too. The interface has three tabs:
   The API key is masked and never sent to the browser; leave the field empty to
   keep it.
 - **Memory** — the facts from `facts.jsonl` (view, add, delete), session
-  transcripts and the audit log with filters.
+  transcripts and the audit log with filters and manual age-based pruning
+  (delete entries older than 1–9 weeks).
 
 Options: `--port <number>` (default 8787), `--host <address>` (default
 `127.0.0.1`), `--token <string>` (default: random, printed at startup) and
@@ -315,7 +385,7 @@ DNS-rebinding attempts from other local pages. There are no cookies (the
 token lives in the URL fragment and `sessionStorage`), and everything the
 agent renders is inserted as text, never HTML.
 
-## 6. One-shot and scripting
+## 7. One-shot and scripting
 
 ```sh
 # Answer on stdout, tool trace on stderr:
@@ -326,6 +396,9 @@ echo "what files changed today?" | basicagent
 
 # Machine-readable events for scripts:
 basicagent --json "read README.md and return its first heading" | jq -c '.type'
+
+# Image + prompt (the model must support vision):
+basicagent --image screenshot.png "What error is shown here?"
 
 Or if you only want to extract the final answer:
 
@@ -355,7 +428,7 @@ Read-only mode does not bypass approval: a whitelisted shell command still
 follows `tools.shell.approval`, so scripted use needs `approval: "never"` or
 `--yes`.
 
-## 7. Skills
+## 8. Skills
 
 Skills are folders with a `SKILL.md` (frontmatter + markdown instructions).
 basicagent injects only their name and description into the prompt and loads
@@ -401,7 +474,7 @@ EOF
 Then `/reload` in the REPL (or just start a new run). See
 `skills/example/SKILL.md` for a fuller template.
 
-## 8. Guardrails
+## 9. Guardrails
 
 ```json
 "tools": {
@@ -474,7 +547,7 @@ Then `/reload` in the REPL (or just start a new run). See
 - Every tool call is appended to `~/.local/share/basicagent/audit.jsonl`,
   including approval requests and their answers.
 
-## 9. Memory
+## 10. Memory
 
 basicagent saves long-term facts (via the `remember` tool) and user/assistant
 text per conversation session under `$XDG_DATA_HOME/basicagent` (falling back
@@ -508,12 +581,18 @@ Ask the agent to "remember that I prefer tabs" and it stores a fact; ask it to
 only user/assistant text, not tool traffic. Everything is plain JSONL — grep
 or delete files directly if you prefer.
 
+The web interface's **Memory → Audit log** tab can delete entries older than
+1–9 weeks. Pruning applies to the whole `audit.jsonl`, not just the 200 rows
+currently shown; malformed or undated lines are kept. It is a human web action,
+not an agent tool, so the prune itself is not written as a tool call. The
+endpoint refuses to run while a turn is active.
+
 Facts are also a lightweight way to rename the agent or teach it your name:
 save `agent_name` / `user_name` (for example in the web interface's Memory
 tab) and they appear in the system prompt of every run — see
 `persona-example.md`.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -534,8 +613,14 @@ tab) and they appear in the system prompt of every run — see
 | Timeouts on slow models | Raise `provider.timeoutMs`. |
 | Answers or tool calls are truncated | The provider's default output cap is low (DeepSeek defaults to 4096). Set `provider.maxTokens` to the provider's maximum (DeepSeek 8192). |
 | `Provider HTTP 400` mentioning `max_tokens` | `provider.maxTokens` is above what the model allows. Lower it, or remove the setting to use the provider default. |
+| `Provider HTTP 400` after attaching an image | The model or server probably does not support vision. Use a multimodal model (for llama.cpp, start with `--mmproj`), or remove the image. |
+| `Cannot prune the audit log while a turn is running` | Wait for the running conversation to finish, or press Stop, then try again. |
+| `Image "…" is …; the limit is …` | The image exceeds `images.maxBytes` (5 MiB by default). Resize/crop it, or raise the limit deliberately. |
+| `Image "…" is not a supported image` | Only PNG, JPEG and WebP are accepted. GIF, BMP, TIFF, HEIC, AVIF and SVG are not. |
+| `Too many images` | The limit is `images.maxImages` (4 by default) per message. |
+| Context fills quickly with images | The estimate is `images.tokensPerImage` (1,200 by default). Raise it if your model's vision encoder uses more, or attach fewer images. |
 
-## 11. Tests
+## 12. Tests
 
 ```sh
 npm test          # offline suite, no network

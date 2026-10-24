@@ -30,6 +30,7 @@ import { buildSystemPrompt } from '../src/prompt.mjs';
 import { createUI, promptLabel } from '../src/ui.mjs';
 import { createApproval } from '../src/approval.mjs';
 import { formatTokens, mask } from '../src/util.mjs';
+import { formatBytes, formatUserEvent, readImageFile } from '../src/images.mjs';
 
 const VERSION = pkg.version;
 
@@ -47,6 +48,8 @@ Options:
   --model <name>     Override the configured model
   --base-url <url>   Override the provider base URL (e.g. http://localhost:11434/v1)
   --api-key <key>    Override the API key (prefer BASICAGENT_API_KEY or apiKeyEnv)
+  --image, -i <file> Attach an image to the prompt (PNG, JPEG or WebP;
+                     repeatable, max 4 and 5 MiB each by default)
   --continue         Resume the most recent conversation session
   --session <id>     Use (or create) a named conversation session
   --ephemeral        Disable memory for this run
@@ -63,7 +66,7 @@ Options:
 
 REPL commands:
   /help /new /reload /skills /tools /model [name] /context /compact
-  /readonly [on|off] /config /quit
+  /image [path|clear] /readonly [on|off] /config /quit
 
 Settings come from, in order: built-in defaults, the config file,
 BASICAGENT_API_KEY/BASICAGENT_BASE_URL/BASICAGENT_MODEL/BASICAGENT_DATA_DIR,
@@ -84,6 +87,7 @@ function parseFlags(argv) {
       model: { type: 'string' },
       'base-url': { type: 'string' },
       'api-key': { type: 'string' },
+      image: { type: 'string', multiple: true, short: 'i' },
       yes: { type: 'boolean' },
       ephemeral: { type: 'boolean' },
       'no-web': { type: 'boolean' },
@@ -190,6 +194,43 @@ async function main() {
   if (!promptText && !process.stdin.isTTY) promptText = await readStdin();
   const replMode = !promptText;
 
+  // Attachments supplied on the command line. In one-shot mode a bad image is
+  // a hard error (a script must not silently send a subset); in the REPL the
+  // valid ones are queued for the first turn and the rest are reported.
+  let pendingImages = [];
+  const imagePaths = values.image ?? [];
+  if (imagePaths.length) {
+    if (!config.images.enabled) {
+      ui.error('Image input is disabled in the configuration (images.enabled).');
+      process.exit(2);
+    }
+    if (imagePaths.length > config.images.maxImages) {
+      const message = `Too many images: ${imagePaths.length} requested; the limit is ${config.images.maxImages} (images.maxImages).`;
+      if (!replMode) {
+        ui.error(message);
+        process.exit(2);
+      }
+      ui.warn(message);
+    }
+    for (const path of imagePaths) {
+      if (pendingImages.length >= config.images.maxImages) break;
+      try {
+        pendingImages.push(await readImageFile(path, { maxBytes: config.images.maxBytes, cwd }));
+      } catch (error) {
+        if (!replMode) {
+          ui.error(error.message);
+          process.exit(1);
+        }
+        ui.error(error.message);
+      }
+    }
+    if (replMode) {
+      for (const attachment of pendingImages) {
+        ui.info(`Attached image: ${attachment.name} (${attachment.mediaType}, ${formatBytes(attachment.bytes)})`);
+      }
+    }
+  }
+
   let rl = null;
   const approve = createApproval({
     interactive: replMode && !values.json,
@@ -253,10 +294,10 @@ async function main() {
     agent.setSystem(buildSystemPrompt({ config, skills, memory, cwd, readOnly }));
   }
 
-  async function runTurn(input, signal) {
+  async function runTurn(input, signal, images = []) {
     refreshSystemPrompt();
-    memory?.appendEvent('user', input);
-    const result = await agent.run(input, { signal });
+    memory?.appendEvent('user', images.length ? formatUserEvent(input, images) : input);
+    const result = await agent.run(input, { signal, images });
     ui.turnEnd();
     memory?.appendEvent('assistant', result.text);
     return result;
@@ -279,7 +320,8 @@ async function main() {
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
     try {
-      await runTurn(promptText, controller.signal);
+      await runTurn(promptText, controller.signal, pendingImages);
+      pendingImages = [];
     } catch (error) {
       renderError(error);
       process.exitCode = 1;
@@ -312,11 +354,12 @@ async function main() {
   let closed = false;
 
   async function handleCommand(line) {
-    const [name, ...rest] = line.slice(1).split(/\s+/);
-    const argument = rest.join(' ').trim();
+    const body = line.slice(1);
+    const name = body.split(/\s+/, 1)[0];
+    const argument = body.slice(name.length).trim();
     switch (name) {
       case 'help':
-        ui.banner('Commands: /new /reload /skills /tools /model [name] /context /compact /readonly [on|off] /config /quit');
+        ui.banner('Commands: /new /reload /skills /tools /model [name] /context /compact /image [path|clear] /readonly [on|off] /config /quit');
         break;
       case 'quit':
       case 'exit':
@@ -324,6 +367,7 @@ async function main() {
         rl.close();
         return;
       case 'new':
+        pendingImages = [];
         agent.reset();
         memory?.startSession();
         ui.info('Started a new conversation.');
@@ -341,6 +385,7 @@ async function main() {
         build();
         agent.messages = messages;
         agent.summary = keptSummary;
+        pendingImages = [];
         refreshSystemPrompt();
         ui.info(`Reloaded: model ${provider.model}, ${skills.size} skills, ${registry.names({ readOnly }).length} tools, read-only ${readOnly ? 'on' : 'off'}.`);
         break;
@@ -352,6 +397,43 @@ async function main() {
       case 'tools':
         ui.info(registry.names({ readOnly }).join(', '));
         break;
+      case 'image': {
+        if (!config.images.enabled) {
+          ui.warn('Image input is disabled in the configuration (images.enabled).');
+          break;
+        }
+        if (!argument) {
+          if (pendingImages.length === 0) {
+            ui.info('No images attached. Use /image <path>, or /image clear to reset.');
+          } else {
+            ui.info(`${pendingImages.length} image(s) attached for the next message:`);
+            for (const attachment of pendingImages) {
+              ui.info(`- ${attachment.name} (${attachment.mediaType}, ${formatBytes(attachment.bytes)})`);
+            }
+          }
+          break;
+        }
+        if (argument.toLowerCase() === 'clear') {
+          pendingImages = [];
+          ui.info('Cleared attached images.');
+          break;
+        }
+        if (pendingImages.length >= config.images.maxImages) {
+          ui.warn(`The limit is ${config.images.maxImages} images per message (images.maxImages).`);
+          break;
+        }
+        try {
+          // The rest of the line is one path, so spaces in screenshot names
+          // work without shell-style quoting. Strip matching outer quotes.
+          const target = argument.replace(/^(['"])(.*)\1$/, '$2');
+          const attachment = await readImageFile(target, { maxBytes: config.images.maxBytes, cwd });
+          pendingImages.push(attachment);
+          ui.info(`Attached image: ${attachment.name} (${attachment.mediaType}, ${formatBytes(attachment.bytes)}). It will be sent with your next message.`);
+        } catch (error) {
+          ui.error(error.message);
+        }
+        break;
+      }
       case 'readonly': {
         const value = argument.toLowerCase();
         if (!value) {
@@ -435,7 +517,9 @@ async function main() {
     }
     busy = true;
     controller = new AbortController();
-    runTurn(input, controller.signal)
+    const images = pendingImages;
+    pendingImages = [];
+    runTurn(input, controller.signal, images)
       .catch((error) => {
         renderError(error);
         if (error?.name !== 'AbortError') ui.warn('The turn ended with an error; the conversation is still usable.');

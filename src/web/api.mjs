@@ -17,6 +17,7 @@
 //   PUT    /api/facts               add/update a fact {key, value}
 //   DELETE /api/facts/:key          remove a fact by exact key
 //   GET    /api/audit               audit log entries (limit/tool/ok filter)
+//   DELETE /api/audit?olderThanWeeks=N  prune audit entries older than N weeks (1-9)
 //   GET    /api/config              raw + effective config (key redacted)
 //   PUT    /api/config              validate, save and live-reload config
 //
@@ -32,6 +33,8 @@ import { buildSystemPrompt } from '../prompt.mjs';
 import { discoverSkills } from '../skills.mjs';
 import { createRegistry } from '../tools/index.mjs';
 import { mask } from '../util.mjs';
+import { IMAGE_MIME_TYPES, parseImageDataUrl } from '../images.mjs';
+import { AUDIT_PRUNE_MAX_WEEKS } from '../memory.mjs';
 import { lastSessionPointer, listSessions, readSessionEvents } from './session.mjs';
 import { readConfigFile, validateRawConfig, writeConfigFile } from '../config-file.mjs';
 
@@ -56,13 +59,13 @@ export function createApi({ state, manager, version }) {
     sendJSON(res, 400, { error: message });
   }
 
-  async function readJSON(req) {
+  async function readJSON(req, limit = REQUEST_BODY_LIMIT) {
     const chunks = [];
     let size = 0;
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > REQUEST_BODY_LIMIT) {
-        const error = new Error('Request body too large');
+      if (size > limit) {
+        const error = new Error(`Request body too large (limit ${limit} bytes)`);
         error.status = 413;
         throw error;
       }
@@ -89,6 +92,15 @@ export function createApi({ state, manager, version }) {
   }
 
   const memoryDir = () => (state.config.memory.enabled ? state.config.memory.dir : null);
+
+  // Image data URLs inflate bytes by roughly 4/3. Keep the chat route's body
+  // limit tied to the configured image limits; every other route keeps the
+  // small default limit.
+  function chatBodyLimit() {
+    const images = state.config.images;
+    if (!images?.enabled) return REQUEST_BODY_LIMIT;
+    return Math.max(REQUEST_BODY_LIMIT, Math.ceil((images.maxImages * images.maxBytes * 4) / 3) + 1024 * 1024);
+  }
 
   function readRawConfigSafe() {
     const path = state.config.paths.configPath;
@@ -135,6 +147,13 @@ export function createApi({ state, manager, version }) {
       contextTokens: config.agent.contextTokens,
       compact: config.agent.compact,
       compactAt: config.agent.compactAt,
+      images: {
+        enabled: config.images.enabled,
+        maxImages: config.images.maxImages,
+        maxBytes: config.images.maxBytes,
+        detail: config.images.detail,
+        types: [...IMAGE_MIME_TYPES]
+      },
       readOnly: config.tools.readOnly,
       memoryEnabled: config.memory.enabled,
       dataDir: dir,
@@ -148,11 +167,33 @@ export function createApi({ state, manager, version }) {
   }
 
   async function chat(req, res) {
-    const body = await readJSON(req);
-    const message = typeof body.message === 'string' ? body.message : '';
-    if (!message.trim()) return badRequest(res, 'message must be a non-empty string');
+    const body = await readJSON(req, chatBodyLimit());
+    if (body.message !== undefined && typeof body.message !== 'string') {
+      return badRequest(res, 'message must be a string');
+    }
+    const message = body.message ?? '';
     if (message.length > MAX_MESSAGE_CHARS) return badRequest(res, `message exceeds ${MAX_MESSAGE_CHARS} characters`);
     if (typeof body.sessionId !== 'string' || !body.sessionId) return badRequest(res, 'sessionId is required');
+
+    const rawImages = body.images === undefined ? [] : body.images;
+    if (!Array.isArray(rawImages)) return badRequest(res, 'images must be an array');
+    if (rawImages.length > 0) {
+      if (!state.config.images.enabled) return badRequest(res, 'image input is disabled (images.enabled)');
+      if (rawImages.length > state.config.images.maxImages) {
+        return sendJSON(res, 413, { error: `Too many images: ${rawImages.length}; the limit is ${state.config.images.maxImages} (images.maxImages)` });
+      }
+    }
+    if (!message.trim() && rawImages.length === 0) return badRequest(res, 'message must be a non-empty string when no images are attached');
+
+    const images = [];
+    for (const raw of rawImages) {
+      try {
+        images.push(parseImageDataUrl(raw, { maxBytes: state.config.images.maxBytes }));
+      } catch (error) {
+        return sendJSON(res, error.status ?? 400, { error: error.message });
+      }
+    }
+
     let session;
     try {
       session = manager.get(body.sessionId);
@@ -180,7 +221,7 @@ export function createApi({ state, manager, version }) {
     });
 
     try {
-      await session.runTurn(message, write);
+      await session.runTurn(message, write, { images });
     } catch (error) {
       if (error?.name === 'AbortError') write({ type: 'aborted' });
       else write({ type: 'error', message: error?.message || String(error) });
@@ -284,7 +325,8 @@ export function createApi({ state, manager, version }) {
         system,
         summary,
         tools: registry.schemas({ readOnly }),
-        messages: plain
+        messages: plain,
+        imageTokens: state.config.images.tokensPerImage
       });
     }
     sendJSON(res, 200, { id, readOnly, messages, contextTokens });
@@ -399,6 +441,25 @@ export function createApi({ state, manager, version }) {
     sendJSON(res, 200, { entries, total: matching.length, limit });
   }
 
+  function auditPrune(res, url) {
+    const store = manager.factStore;
+    if (!store) return badRequest(res, 'memory is disabled');
+    if (manager.anyBusy()) {
+      return sendJSON(res, 409, { error: 'Cannot prune the audit log while a turn is running' });
+    }
+    const raw = url.searchParams.get('olderThanWeeks');
+    if (raw === null || raw.trim() === '') return badRequest(res, 'olderThanWeeks is required');
+    const olderThanWeeks = Number(raw);
+    if (!Number.isInteger(olderThanWeeks) || olderThanWeeks < 1 || olderThanWeeks > AUDIT_PRUNE_MAX_WEEKS) {
+      return badRequest(res, `olderThanWeeks must be an integer from 1 to ${AUDIT_PRUNE_MAX_WEEKS}`);
+    }
+    try {
+      sendJSON(res, 200, store.pruneAudit({ olderThanWeeks }));
+    } catch (error) {
+      sendJSON(res, 500, { error: `Could not prune the audit log: ${error.message}` });
+    }
+  }
+
   function configGet(res) {
     sendJSON(res, 200, configPayload());
   }
@@ -498,6 +559,10 @@ export function createApi({ state, manager, version }) {
       }
       if (path === '/api/audit' && method === 'GET') {
         await audit(res, url);
+        return true;
+      }
+      if (path === '/api/audit' && method === 'DELETE') {
+        auditPrune(res, url);
         return true;
       }
       if (path === '/api/config' && method === 'GET') {

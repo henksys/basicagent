@@ -59,15 +59,16 @@ has no `dependencies`.
 | `src/config-file.mjs` | Read/validate/write the raw config file; atomic writes, mode 0600. |
 | `src/provider.mjs` | The only place that talks HTTP. One OpenAI-compatible `/v1/chat/completions` call with SSE streaming; rebuilds tool calls from deltas. |
 | `src/agent.mjs` | The agent loop: send messages + tool schemas, stream the answer, execute tool calls, feed results back, repeat. Applies iteration limits, the configurable failure circuit breaker and the context budget. Also defines the event stream. |
-| `src/context.mjs` | Token accounting for the whole prompt (system, tools, summary, messages) and the `trimHistory` fallback. |
-| `src/compact.mjs` | Summarization helpers: safe cut points, transcript rendering, the summarizer prompt and summary normalization. |
+| `src/context.mjs` | Token accounting for the whole prompt (system, tools, summary, messages) and the `trimHistory` fallback. Image parts are charged a fixed estimate instead of their base64 size. |
+| `src/compact.mjs` | Summarization helpers: safe cut points, transcript rendering, the summarizer prompt and summary normalization. Image parts are rendered as `[image]`, never base64. |
+| `src/images.mjs` | Image attachment validation and encoding: PNG/JPEG/WebP magic-byte detection, size checks, base64 data URLs, OpenAI content parts, session markers. |
 | `src/tools/index.mjs` | Tool registry: schema validation, read-only filtering, dispatch, per-call audit log. |
 | `src/tools/files.mjs` | File tools plus the root-based path policy (`checkAccess`, `softRealpath`). |
 | `src/tools/shell.mjs` | `run_command` with approval, timeout, denylist, read-only allowlist and output caps. |
 | `src/tools/web.mjs` | `fetch_url`: guarded HTTP fetching, SSRF checks, bounded reads, HTML-to-text extraction. Omitted when `tools.web.enabled` is false. |
 | `src/tools/memory-tools.mjs` | `remember`, `search_memory`, `forget`. |
 | `src/skills.mjs` | SKILL.md discovery, frontmatter parsing (plain, `>` and `|`), prompt index generation, `load_skill` tool. |
-| `src/memory.mjs` | JSONL persistence: `facts.jsonl`, `sessions/<id>.jsonl` (messages plus compaction summaries), `last-session.txt`, `audit.jsonl`. |
+| `src/memory.mjs` | JSONL persistence: `facts.jsonl`, `sessions/<id>.jsonl` (messages plus compaction summaries), `last-session.txt`, `audit.jsonl` and atomic age-based audit pruning. |
 | `src/prompt.mjs` | System prompt assembly from persona + environment + skills + facts + tool guidance + safety rules. |
 | `src/approval.mjs` | Approval policy for guarded operations (interactive / deny / `--yes`). |
 | `src/ui.mjs` | Terminal rendering for human and JSON modes. |
@@ -84,7 +85,9 @@ has no `dependencies`.
 3. `Agent.run` pushes the user message and enters the loop:
    1. If the prompt is over the compaction threshold, `Agent` summarizes the
       oldest turns first (`src/compact.mjs`) or trims them when compaction is
-      off. The model never decides to do this.
+      off. The model never decides to do this. Attached images live in the
+      user message as `image_url` content parts; old images are dropped when
+      their turn is summarized.
    2. `Provider.chat` streams the model answer, emitting `assistant_delta`
       events, and returns `{ content, toolCalls, finishReason, usage }`.
    3. If there are no tool calls, the loop emits `done` and returns.
@@ -103,7 +106,9 @@ has no `dependencies`.
 - **Context budget** (`agent.contextTokens`, default 24000): counted over the
   whole prompt — system prompt, skills, facts, tool schemas, summary and
   messages — using `provider.usage.prompt_tokens` when available and UTF-8
-  byte estimates otherwise. Before every request, `Agent` checks the budget.
+  byte estimates otherwise. Image content parts are counted as
+  `images.tokensPerImage` (default 1200) rather than as their base64 bytes.
+  Before every request, `Agent` checks the budget.
   At `agent.compactAt` (default 0.8) it summarizes the oldest turns; the cut
   always lands on a user message so an assistant `tool_calls` message is never
   separated from its `tool` results. Recent turns stay verbatim. If the
@@ -161,7 +166,7 @@ is treated like local shell access:
 | Endpoint | Notes |
 | --- | --- |
 | `GET /api/status` | model, cwd, data dir, tools, skills, read-only default, last session. |
-| `POST /api/chat` | one turn; NDJSON stream with the events above. 409 while busy. |
+| `POST /api/chat` | one turn; NDJSON stream with the events above. 409 while busy. Accepts `images: [{ name, dataUrl }]` (PNG/JPEG/WebP data URLs); the body limit grows with `images.maxImages × images.maxBytes`. |
 | `POST /api/chat/abort` | cancels the running turn (also on client disconnect). |
 | `POST /api/approvals/:id` | answers a paused approval; expired/unknown ids 404. |
 | `GET/POST /api/sessions`, `GET /api/sessions/:id` | session list and transcripts from `sessions/*.jsonl`; includes `readOnly` for the conversation. |
@@ -169,11 +174,16 @@ is treated like local shell access:
 | `DELETE /api/sessions/:id` | removes one stored conversation and its in-memory session; the `--continue` pointer moves to the newest remaining session (409 while a turn runs). |
 | `GET/PUT /api/facts`, `DELETE /api/facts/:key` | fact store via `Memory` (exact-key delete). |
 | `GET /api/audit` | parsed `audit.jsonl`, newest first, `limit`/`tool`/`ok` filters. |
+| `DELETE /api/audit?olderThanWeeks=N` | deletes audit entries older than N weeks (1–9); rewrites the whole file atomically. 409 while a turn is running. |
 | `GET/PUT /api/config` | raw file + effective (masked) config; PUT validates, writes atomically and live-reloads every session. |
 
 The chat composer has a per-conversation read-only toggle. Settings sets the
 default for new conversations; an existing live conversation keeps its current
-mode when settings are saved.
+mode when settings are saved. Images can be attached with the composer button,
+drag-and-drop or paste. The server checks the count, decoded size and magic
+bytes before calling the model; the browser checks first so an oversized file
+does not leave the machine. Sessions store `[image: filename]` markers, not
+base64.
 
 Sessions are never replayed from tool traffic: a `WebSession` loads only the
 persisted user/assistant text, exactly like `--session` in the CLI. Approvals
@@ -192,7 +202,8 @@ between servers:
 - request: `{ model, messages, stream: true, temperature }` plus `tools` when
   tools exist and `max_tokens` only when `provider.maxTokens` is set (unset =
   the provider's own default output limit). `tool_choice` is only sent when
-  configured, because Ollama rejects it.
+  configured, because Ollama rejects it. User messages with images use the
+  standard content-part array (`text` plus `image_url` with a base64 data URL).
 - response: SSE `data:` lines, `[DONE]` terminator, `choices[0].delta`.
 - tolerated quirks: missing/repeated tool call ids, names split across deltas,
   arguments delivered as objects, missing trailing newline, `content` given as
@@ -382,12 +393,15 @@ Under `memory.dir` (default: `$XDG_DATA_HOME/basicagent`, falling back to
 | `audit.jsonl` | every tool call: `{ts, tool, args, ok, error, durationMs, approvals}`. |
 
 Resuming replays only user/assistant text; tool traffic is not replayed.
-`forget` rewrites facts and session files to remove matching lines.
+`forget` rewrites facts and session files to remove matching lines. The web UI
+can prune `audit.jsonl` entries older than 1–9 weeks through the web API; that
+maintenance action rewrites the audit file atomically and is not an agent tool.
 
 ## CLI modes
 
 - **REPL** (`basicagent`): interactive; commands `/help /new /reload /skills
-  /tools /model [name] /context /compact /readonly [on|off] /config /quit`.
+  /tools /model [name] /context /compact /image [path|clear] /readonly [on|off]
+  /config /quit`.
   Ctrl+C cancels the running turn; Ctrl+D exits. `/reload` re-reads the config
   file, skills, provider and prompt while keeping the conversation.
 - **One-shot** (`basicagent "..."` or a pipe): runs one turn and exits.
@@ -403,7 +417,9 @@ See `config.example.json` and the table in `docs/TUTORIAL.md`. Precedence:
 defaults, config file, environment (`BASICAGENT_API_KEY`, `BASICAGENT_BASE_URL`,
 `BASICAGENT_MODEL`, `BASICAGENT_DATA_DIR`), CLI flags. Read-only mode is
 `tools.readOnly`; its shell allowlist is `tools.shell.readOnlyAllowlist`; the
-tool-loop breaker is `agent.toolCircuitBreaker.failureThreshold`.
+tool-loop breaker is `agent.toolCircuitBreaker.failureThreshold`. Image
+attachments are configured by `images.enabled`, `images.maxImages`,
+`images.maxBytes`, `images.detail` and `images.tokensPerImage`.
 
 ## Testing
 
@@ -411,6 +427,10 @@ tool-loop breaker is `agent.toolCircuitBreaker.failureThreshold`.
   the path policy, read-only tool filtering and the shell allowlist, skills,
   memory, the web server (auth, streaming, approvals, config save,
   read-only toggles) and the CLI end to end against fake in-process servers.
+  Image tests cover magic-byte sniffing, size/type rejection, content parts,
+  the fixed context estimate, session markers and web upload validation.
+  Audit pruning tests cover date cutoffs, preservation of malformed lines, API
+  validation and the busy-turn guard.
 - `npm run test:live` — opt-in integration test against Ollama Cloud
   (`OLLAMA_API_KEY_CLOUD`, default model `gemma4:31b`). It creates a file with
   `write_file` and reads it back with `read_file`.

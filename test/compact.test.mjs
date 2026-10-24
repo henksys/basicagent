@@ -68,6 +68,20 @@ test('serializeMessages labels roles and stays bounded', () => {
   assert.match(long, /^User: x+/);
 });
 
+test('serializeMessages replaces image payloads with a placeholder', () => {
+  const text = serializeMessages([
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'What is this?' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(10000)}` } }
+      ]
+    }
+  ]);
+  assert.match(text, /^User: What is this\?\n\[image\]/);
+  assert.ok(!text.includes('base64'), 'the summarizer never receives image data');
+});
+
 test('buildSummaryRequest folds in the previous summary', () => {
   const request = buildSummaryRequest({
     previousSummary: 'older context',

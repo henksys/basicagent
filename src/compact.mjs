@@ -18,6 +18,7 @@
 
 import { bounded } from './util.mjs';
 import { estimateMessageTokens } from './context.mjs';
+import { contentToText } from './images.mjs';
 
 export const SUMMARY_SYSTEM_PROMPT = `You compress the earlier part of a conversation between a user and a command-line agent.
 
@@ -70,7 +71,7 @@ export function serializeMessages(messages, maxChars = 24000) {
       message.role === 'assistant' ? 'Assistant' :
       message.role === 'tool' ? 'Tool result' :
       String(message.role || 'Message');
-    let text = typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? '');
+    let text = contentToText(message.content);
     if (message.tool_calls?.length) {
       const names = message.tool_calls.map((call) => call?.function?.name).filter(Boolean);
       if (names.length) text += `\n[called: ${names.join(', ')}]`;
@@ -95,7 +96,7 @@ export function serializeMessages(messages, maxChars = 24000) {
 // conversation already fits the recent-history allowance, the budget pressure
 // comes from the fixed prompt or the current turn, and summarizing old turns
 // would not help: return 0 and let trimHistory handle it.
-export function findSummaryCut(messages, { contextTokens } = {}) {
+export function findSummaryCut(messages, { contextTokens, imageTokens } = {}) {
   if (!Array.isArray(messages) || messages.length < 2) return 0;
   const userIndexes = [];
   for (let index = 0; index < messages.length; index++) {
@@ -108,7 +109,7 @@ export function findSummaryCut(messages, { contextTokens } = {}) {
   let kept = 0;
   let overflowed = false;
   for (let index = messages.length - 1; index >= 0; index--) {
-    kept += estimateMessageTokens(messages[index]);
+    kept += estimateMessageTokens(messages[index], { imageTokens });
     if (kept > keepTokens) {
       overflowed = true;
       break;

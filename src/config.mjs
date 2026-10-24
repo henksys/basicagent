@@ -48,6 +48,21 @@ export const DEFAULTS = Object.freeze({
     // Some servers return token usage in the stream; harmless when off.
     includeUsage: false
   },
+  images: {
+    // Image attachments for vision models. Only PNG, JPEG and WebP are
+    // accepted (the formats shared by OpenAI, Ollama and llama.cpp).
+    enabled: true,
+    // Per user turn. An image is sent as an OpenAI image_url content part with
+    // a base64 data URL.
+    maxImages: 4,
+    maxBytes: 5 * 1024 * 1024,
+    // OpenAI's image detail hint. "auto" omits the field; "low" and "high"
+    // are sent. Ollama ignores it.
+    detail: 'auto',
+    // Budget estimate for one image. The actual provider charge depends on its
+    // vision encoder, not on the base64 size.
+    tokensPerImage: 1200
+  },
   agent: {
     maxIterations: 25,
     // Budget for the whole prompt: system prompt, skills, saved facts, tool
@@ -185,6 +200,14 @@ export function normalizeConfig(config, { cwd, configPath, configFound }) {
   if (!Number.isInteger(provider.timeoutMs) || provider.timeoutMs <= 0) throw new Error('provider.timeoutMs must be a positive integer');
   if (provider.toolChoice !== null && !['auto', 'required', 'none'].includes(provider.toolChoice)) throw new Error('provider.toolChoice must be null, "auto", "required" or "none"');
   if (provider.apiKeyEnv !== null && provider.apiKeyEnv !== undefined && typeof provider.apiKeyEnv !== 'string') throw new Error('provider.apiKeyEnv must be a string');
+
+  const images = config.images;
+  if (!images || typeof images !== 'object' || Array.isArray(images)) throw new Error('images must be an object');
+  if (typeof images.enabled !== 'boolean') throw new Error('images.enabled must be a boolean');
+  if (!Number.isInteger(images.maxImages) || images.maxImages < 1) throw new Error('images.maxImages must be a positive integer');
+  if (!Number.isInteger(images.maxBytes) || images.maxBytes < 1024) throw new Error('images.maxBytes must be an integer of at least 1024');
+  if (!['auto', 'low', 'high'].includes(images.detail)) throw new Error('images.detail must be "auto", "low" or "high"');
+  if (!Number.isInteger(images.tokensPerImage) || images.tokensPerImage < 1) throw new Error('images.tokensPerImage must be a positive integer');
 
   const agent = config.agent;
   if (!Number.isInteger(agent.maxIterations) || agent.maxIterations < 1) throw new Error('agent.maxIterations must be a positive integer');
