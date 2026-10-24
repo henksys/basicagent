@@ -234,7 +234,7 @@ basicagent
 ```
 
 ```
-basicagent 1.5.0
+basicagent 1.5.1
 model     gemma4:31b @ https://ollama.com/v1
 cwd       /home/you/Projects/basicagent
 readonly  off
