@@ -1,6 +1,6 @@
 {
   "name": "basicagent",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "A scriptable and interactive command line agent with web-interface, file tools, web-fetch, skills, and OpenAI-compatible LLM providers.",
   "type": "module",
   "bin": {
