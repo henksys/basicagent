@@ -327,8 +327,17 @@ echo "what files changed today?" | basicagent
 # Machine-readable events for scripts:
 basicagent --json "read README.md and return its first heading" | jq -c '.type'
 
+Or if you only want to extract the final answer:
+
+basicagent --json "read README.md and return its first heading" | jq -r 'select(.type=="done").text'
+
 # Read-only tools: no file writes; only allowlisted shell commands:
 basicagent --read-only "summarize the logs with journalctl"
+
+# The same but using "2>/dev/null" to suppress the tool-calling data output and only get the answer stream:
+# ( using 2>/dev/null gives the answer without tool lines — but also hides warnings and errors notices.)
+basicagent --read-only "check if fstrim ran recently, what the ouput was and how fstrim is configured" 2>/dev/null
+
 ```
 
 `--json` emits one JSON object per line: `iteration`, `context`,
