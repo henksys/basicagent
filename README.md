@@ -28,6 +28,23 @@ guarded actions ask for approval; web fetch is SSRF-protected; and every tool
 call is audited. A configurable circuit breaker stops repeated failing tool
 calls from looping.
 
+
+## Required models to use with BasicAgent
+
+Obviously BasicAgent will work fine with the bigger cloud models from deepseek and OpenAI. It also works fine with for example the free *gemma4:31b* model in the Ollama cloud.
+
+### But what about smaller local models?:
+
+When testing on a Llama.cpp server with *Qwen3.5-4B* ( plus matching mmproj file if image recognition is needed), BasicAgent did reasonably well, but it did sometimes needed to be assisted with extra context or information.  The *Qwen3.5-9B* model was able to put 2 and 2 together by itself, so it needed far less context or instructions, and was far more useful for someone who has less domain knowledge of the task at hand. The *Qwen3.5:2b* model was less useful, and needed a lot of manual instructions, to the point that one could better do the task himself. However, even with that model Basicagent would never get into a loop with tool-calls, thanks to the build-in circuit-breaker.
+
+So realistically for local models:
+
+At minimum: *Qwen3.5-4B* (or equivalent)
+
+Ideally   : *Qwen3.5:9b* (equivalent or higher) 
+
+
+
 ## Requirements
 
 It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
