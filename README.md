@@ -28,6 +28,11 @@ guarded actions ask for approval; web fetch is SSRF-protected; and every tool
 call is audited. A configurable circuit breaker stops repeated failing tool
 calls from looping.
 
+## Screenshot web-interface as Live assistant in the browser.
+
+<p align="left">
+  <img src="screenshots/basicagent-webinterface.jpg" alt="Application Screenshot" width="800">
+</p>
 
 ## Required models to use with BasicAgent
 
