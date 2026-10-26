@@ -46,11 +46,15 @@ When testing on a Llama.cpp server with *Qwen3.5-4B* ( plus matching mmproj file
 
 So realistically for local models:
 
+- For scripting with fine-tuned instructions : *Qwen3.5-2B* (or equivalent)
+
+- But as an actual assistant:
+
 At minimum: *Qwen3.5-4B* (or equivalent)
 
 Ideally   : *Qwen3.5:9b* (equivalent or higher) 
 
-note: the more capable the model is, the less precise instructions it needs. The same goes for the SKILL.md files.
+*note: the more capable the model is, the less precise instructions it needs. The same goes for the SKILL.md files.*
 
 
 
