@@ -62,6 +62,17 @@ Ideally   : *Qwen3.5:9b* (equivalent or higher)
 
 It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
 
+Ideally you would have Node.js installed on your computer, because that would allow you to npm-link BasicAgent, and later run it from any location from within your terminal. 
+
+If you don't have nodejs installed, and just want to have it portable, you can also use the Node.js download script ( nodejs_download.sh ) from within the basicagent folder. This will download and extract Node.js version v24.22.1 in that same folder. Node.js itself is portable, and you can run it by calling the binary directly from the extracted directory. After you have downloaded Node.js, with the script, you can start the BasicAgent setup from within the BasicAgent folder with the following command:
+
+```
+node-v24.22.1-linux-x64/bin/node bin/basicagent-setup.mjs 
+```
+
+And use that same method to run *basicagent.mjs* and *basicagent-web.mjs*
+
+
 ## Features
 
 - **OpenAI-compatible providers** — Ollama, Ollama Cloud, llama.cpp, DeepSeek, OpenAI.
