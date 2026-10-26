@@ -60,7 +60,7 @@ Ideally   : *Qwen3.5:9b* (equivalent or higher)
 
 ## Requirements
 
-It only requires [Node 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
+It only requires [Node.js 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
 
 Ideally you would have Node.js installed on your computer, because that would allow you to npm-link BasicAgent, and later run it from any location from within your terminal. 
 
