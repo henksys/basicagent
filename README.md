@@ -233,6 +233,11 @@ npm test           # offline tests, fake provider, no network
 npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 ```
 
+
+## Privacy
+
+BasicAgent has no dependencies, other then that it is running on NodeJS. This means that when running BasicAgent with a local model, via for example Llama.cpp, nothing will ever leave your machine to the outside world. There is no telemetry nor an update checker. You can disable the web-fetch tool in the configuration, but even If you initiate its web-fetch feature, you can auto/manually give your approval and trace exactly what is being queried. There are no binary files, so the code is fully inspectable. 
+
 ## License
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
