@@ -1,4 +1,6 @@
-# basicagent
+# <img src="web/assets/favicon.svg" width="48"> basicagent
+
+
 
 A small, focused command line agent that runs an OpenAI-compatible model
 (Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop. It is fast
