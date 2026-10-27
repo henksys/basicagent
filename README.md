@@ -92,18 +92,34 @@ And use that same method to run *basicagent.mjs* and *basicagent-web.mjs*
 # guided setup: writes the config, tests the provider, offers the web UI
 node bin/basicagent-setup.mjs        # or: npm run setup
 
-# or run directly; without a config it expects local Ollama
-node bin/basicagent.mjs "list the files here and summarize the project"
-
-# Ollama Cloud
-BASICAGENT_BASE_URL=https://ollama.com/v1 \
-BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
-node bin/basicagent.mjs --model gemma4:31b "say hello"
 ```
 
 The setup writes `~/.config/basicagent/config.json` (copy
 `config.example.json` there to do it by hand). Full provider recipes and
 configuration are in the [tutorial](docs/TUTORIAL.md).
+
+If you have NodeJS version 24 or higher installed, and you want to be able to run basicagent, basicagent-web or basicagent-setup from anywhere as a command in your terminal (without typing "node" in front of it):
+
+Copy the basicagent folder for example in your homedir at "~/basicagent"
+
+```sh
+# Then go to the directory
+cd ~/basicagent
+
+# And link the basicagent tools
+npm link
+```
+( there is no need for any extra parameters since the folder contains the file *package.json* with all the instructions)
+
+From anywhere in the terminal you can now just start the tools by typing:
+
+basicagent
+
+basicagent-web
+
+basicagent-setup
+
+
 
 ## Web interface
 
