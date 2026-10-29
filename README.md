@@ -19,10 +19,9 @@ toolset is deliberately small:
 - web fetch with SSRF and domain protection
 - SKILL.md skills and persistent JSONL memory
 
-**Size:** less then 1 mb. The agent itself is about 8,100 lines of source (CLI, core and web
-interface). The test suite adds about 3,600 lines; together they are about
-11,700. Node.js 24+ built-ins are the only requirement: no external
-dependencies and no build step.
+**Size:** the source is under 1 MB — roughly 8,600 lines across the CLI, core
+and web interface. The test suite adds roughly 3,700 lines. Node.js 24+
+built-ins are the only requirement: no external dependencies and no build step.
 
 Security is deliberately visible and configurable: tools can be enabled,
 disabled or scoped; read-only mode blocks file writes and limits shell commands;
@@ -30,31 +29,36 @@ guarded actions ask for approval; web fetch is SSRF-protected; and every tool
 call is audited. A configurable circuit breaker stops repeated failing tool
 calls from looping.
 
-## Screenshot web-interface as Live assistant in the browser.
+## Web interface: a live assistant in the browser
 
 <p align="left">
   <img src="screenshots/basicagent-webinterface.jpg" alt="Application Screenshot" width="800">
 </p>
 
-## Required models to use with BasicAgent
+## Recommended models
 
-Obviously BasicAgent will work fine with the bigger cloud models from deepseek and OpenAI. It also works fine with for example the free *gemma4:31b* model in the Ollama cloud.
+basicagent works well with the larger cloud models from DeepSeek and OpenAI.
+It also works well with, for example, the free *gemma4:31b* model in Ollama
+Cloud.
 
-### But what about smaller local models?:
+### Smaller local models
 
-(tested with a context window of 32k)
+(tested with a 32k context window)
 
-When testing on a Llama.cpp server with *Qwen3.5-4B* ( plus matching mmproj file if image recognition is needed), BasicAgent did reasonably well, but it did sometimes needed to be assisted with extra context or information.  The *Qwen3.5-9B* model was able to put 2 and 2 together by itself, so it needed far less context or instructions, and was far more useful for someone who has less domain knowledge of the task at hand. The *Qwen3.5:2b* model was less useful, and needed a lot of manual instructions, to the point that one could better do the task himself. However, even with that model Basicagent would never get into a loop with tool-calls, thanks to the build-in circuit-breaker.
+On a llama.cpp server, *Qwen3.5-4B* (with a matching mmproj file if image
+recognition is needed) did reasonably well but sometimes needed extra context
+or information. *Qwen3.5-9B* was able to put two and two together by itself,
+so it needed far less context or instructions and was more useful for someone
+with less domain knowledge. *Qwen3.5-2B* was less useful and needed a lot of
+manual instructions, to the point where one could better do the task manually.
+Even with that model, basicagent never got into a loop with tool calls, thanks
+to the built-in circuit breaker.
 
 So realistically for local models:
 
-- For scripting with fine-tuned instructions : *Qwen3.5-2B* (or equivalent)
-
-- But as an actual assistant:
-
-At minimum: *Qwen3.5-4B* (or equivalent)
-
-Ideally   : *Qwen3.5:9b* (equivalent or higher) 
+- For scripting with fine-tuned instructions: *Qwen3.5-2B* (or equivalent).
+- As an actual assistant, at minimum: *Qwen3.5-4B* (or equivalent).
+- Ideally: *Qwen3.5-9B* (or equivalent or higher).
 
 *note: the more capable the model is, the less precise instructions it needs. The same goes for the SKILL.md files.*
 
@@ -62,17 +66,30 @@ Ideally   : *Qwen3.5:9b* (equivalent or higher)
 
 ## Requirements
 
-It only requires [Node.js 24](https://nodejs.org/en/about/previous-releases) or newer (declared in `package.json` engines).
+basicagent requires [Node.js 24](https://nodejs.org/en/about/previous-releases)
+or newer (declared in `package.json` engines). There are no external
+dependencies and no build step. It runs on Linux, macOS and Windows.
 
-Ideally you would have Node.js installed on your computer, because that would allow you to npm-link BasicAgent, and later run it from any location from within your terminal. 
+Having Node.js installed system-wide is recommended: it lets you `npm link`
+basicagent and run it from any directory.
 
-If you don't have nodejs installed, and just want to have it portable, you can also use the Node.js download script ( nodejs_download.sh ) from within the basicagent folder. This will download and extract Node.js version v24.22.1 in that same folder. Node.js itself is portable, and you can run it by calling the binary directly from the extracted directory. After you have downloaded Node.js, with the script, you can start the BasicAgent setup from within the BasicAgent folder with the following command:
+### No Node.js installed?
 
+On Linux x64 you can use the bundled download script to fetch a portable
+Node.js v24.22.1 into the basicagent folder:
+
+```sh
+bash nodejs_download.sh
 ```
-node-v24.22.1-linux-x64/bin/node bin/basicagent-setup.mjs 
+
+The script needs `wget`, `tar` and `sha256sum`. Once it finishes:
+
+```sh
+node-v24.22.1-linux-x64/bin/node bin/basicagent-setup.mjs
 ```
 
-And use that same method to run *basicagent.mjs* and *basicagent-web.mjs*
+Use the same prefix for `bin/basicagent.mjs` and `bin/basicagent-web.mjs`.
+The script is Linux x64 only; on macOS or Windows, install Node.js normally.
 
 
 ## Features
@@ -81,45 +98,66 @@ And use that same method to run *basicagent.mjs* and *basicagent-web.mjs*
 - **Image input for vision models** — attach PNG, JPEG or WebP from the CLI or web interface.
 - **Interactive and scriptable** — REPL, instant one-shot runs, JSON-lines output, and a fast local web interface.
 - **Lean, skill-based toolset** — file tools, shell, web fetch, SKILL.md skills and persistent JSONL memory.
-- **Configurable safety** — file-root policies, approval prompts, read-only tool mode with a shell allowlist, SSRF protection and an audit log.
+- **Configurable safety** — file-root policies, approval prompts, read-only tool mode with a shell allowlist, SSRF protection, and an audit log with manual age-based pruning.
 - **Loop protection** — iteration limits and a configurable circuit breaker for repeated identical tool failures.
 - **Guided setup** — writes the config, tests the provider and can start the web UI.
 - **Zero dependencies** — Node.js 24+ built-ins only, no build step.
 
 ## Quick start
 
+Get the code first:
+
+```sh
+git clone https://github.com/henksys/basicagent.git
+cd basicagent
+```
+
+Then run the guided setup:
+
 ```sh
 # guided setup: writes the config, tests the provider, offers the web UI
 node bin/basicagent-setup.mjs        # or: npm run setup
-
 ```
 
 The setup writes `~/.config/basicagent/config.json` (copy
 `config.example.json` there to do it by hand). Full provider recipes and
 configuration are in the [tutorial](docs/TUTORIAL.md).
 
-If you have NodeJS version 24 or higher installed, and you want to be able to run basicagent, basicagent-web or basicagent-setup from anywhere as a command in your terminal (without typing "node" in front of it):
-
-Copy the basicagent folder for example in your homedir at "~/basicagent"
+Prefer a single prompt? Run it directly. Without a config it expects a local
+Ollama at `http://localhost:11434/v1`:
 
 ```sh
-# Then go to the directory
-cd ~/basicagent
+node bin/basicagent.mjs "list the files here and summarize the project"
+```
 
-# And link the basicagent tools
+For Ollama Cloud:
+
+```sh
+BASICAGENT_BASE_URL=https://ollama.com/v1 \
+BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
+node bin/basicagent.mjs --model gemma4:31b "say hello"
+```
+
+### Run from anywhere
+
+With Node.js 24+ installed, copy the folder to a stable location (for example
+`~/basicagent`) and link the commands:
+
+```sh
+cd ~/basicagent
 npm link
 ```
-( there is no need for any extra parameters since the folder contains the file *package.json* with all the instructions)
 
-From anywhere in the terminal you can now just start the tools by typing:
+`package.json` defines the commands, so no extra arguments are needed. You can
+then run `basicagent`, `basicagent-web` and `basicagent-setup` from anywhere.
 
-basicagent
+## Upgrading
 
-basicagent-web
-
-basicagent-setup
-
-
+Configs from before 1.4.0 that still contain `agent.contextChars` are rejected
+at startup. Run `node bin/basicagent-setup.mjs` to migrate (100,000 characters
+is roughly 25,000 tokens), or replace the key with `agent.contextTokens`
+manually. See the
+[tutorial](docs/TUTORIAL.md#upgrading-from-contextchars) for details.
 
 ## Web interface
 
@@ -175,7 +213,7 @@ lists pending attachments and `/image clear` removes them. The web composer
 accepts the same formats through its attach button, drag-and-drop or paste.
 Images are limited to 4 per message and 5 MiB each by default (`images` in the
 config). The model itself must support vision; otherwise the provider returns
-an error and Basicagent explains the likely cause.
+an error and basicagent explains the likely cause.
 
 ## Documentation
 
@@ -197,6 +235,7 @@ an error and Basicagent explains the likely cause.
 
 ```
 basicagent [options] [prompt]
+echo "prompt" | basicagent [options]
 
   --config <file>   config file (default ~/.config/basicagent/config.json)
   --cwd <dir>       working directory for this run
@@ -204,6 +243,7 @@ basicagent [options] [prompt]
                     (default $XDG_DATA_HOME/basicagent, or ~/.local/share/basicagent)
   --model <name>    override the model
   --base-url <url>  override the provider URL
+  --api-key <key>   override the API key (prefer BASICAGENT_API_KEY or apiKeyEnv)
   --image, -i <file> attach an image (PNG/JPEG/WebP; repeatable)
   --continue        resume the most recent session
   --session <id>    use a named session
@@ -215,6 +255,8 @@ basicagent [options] [prompt]
   --json            JSON-lines event output (for scripts)
   --no-color        disable ANSI colors in terminal output
   --yes             auto-approve guarded actions without asking (dangerous)
+  -h, --help        show help
+  -v, --version     show version
 ```
 
 REPL commands: `/help /new /reload /skills /tools /model [name] /context
@@ -230,6 +272,8 @@ basicagent-web [options]
   --token <string>  fixed access token (default: random, printed at startup)
   --no-open         do not open the interface in the default browser
   --config/--cwd/--data-dir/--model/--base-url/--api-key/--no-web
+  -h, --help        show help
+  -v, --version     show version
 ```
 
 The guided setup is its own command too:
@@ -240,6 +284,8 @@ basicagent-setup [options]
   --config <file>  config file to create or edit (default ~/.config/basicagent/config.json)
   --no-test        skip the provider connection test
   --no-start       do not offer to start the web interface
+  -h, --help       show help
+  -v, --version    show version
 ```
 
 ## Development
@@ -250,9 +296,20 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 ```
 
 
+## Links
+
+- [Product page](https://henksys.com/product/basicagent.html)
+- [Releases](https://github.com/henksys/basicagent/releases)
+- [Issues](https://github.com/henksys/basicagent/issues)
+
 ## Privacy
 
-BasicAgent has no dependencies, other then that it is running on NodeJS. This means that when running BasicAgent with a local model, via for example Llama.cpp, nothing will ever leave your machine to the outside world. There is no telemetry nor an update checker. You can disable the web-fetch tool in the configuration, but even If you initiate its web-fetch feature, you can auto/manually give your approval and trace exactly what is being queried. There are no binary files, so the code is fully inspectable. 
+basicagent has no dependencies beyond Node.js itself. When you run it with a
+local model, for example via llama.cpp, nothing leaves your machine. There is
+no telemetry and no update checker. You can disable the web-fetch tool in the
+configuration; when you do use it, you can approve each request and trace
+exactly what is being queried. There are no binary files, so the code is fully
+inspectable.
 
 ## License
 
