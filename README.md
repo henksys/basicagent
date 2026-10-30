@@ -1,60 +1,23 @@
 # <img src="web/assets/favicon.svg" width="48"> basicagent
 
 
+CLI agent + web-interface that runs on Node.js® v24 or higher.
 
-A small, focused command line agent that runs an OpenAI-compatible model
-(Ollama, llama.cpp, DeepSeek, OpenAI, ...) in a tool-calling loop. It is fast
-by design: one-shot runs start instantly, the local web interface is a small
-hand-written app with no build step, and there is no framework between you and
-the provider.
+Can be configured with any OpenAI-compatible (local or cloud) model.
 
-basicagent stays lean by being skill-based. Capabilities are added with
-SKILL.md files rather than by growing an internal tool surface. You can write
-a SKILL.md yourself, ask the agent to write one for you, or use one that
-teaches it to drive a program already installed on the machine. The built-in
-toolset is deliberately small:
+This agent is SKILL-based, therefore the built-in toolset is deliberately small:
 
 - file reading, writing, editing, appending, listing and renaming
 - shell commands (off by default, approval-based)
 - web fetch with SSRF and domain protection
 - SKILL.md skills and persistent JSONL memory
 
-**Size:** the source is under 1 MB — roughly 8,600 lines across the CLI, core
-and web interface. The test suite adds roughly 3,700 lines. Node.js 24+
-built-ins are the only requirement: no external dependencies and no build step.
+**Size:** the source is under 1 Mb.
 
-Security is deliberately visible and configurable: tools can be enabled,
-disabled or scoped; read-only mode blocks file writes and limits shell commands;
-guarded actions ask for approval; web fetch is SSRF-protected; and every tool
-call is audited. A configurable circuit breaker stops repeated failing tool
-calls from looping.
+Security is deliberately visible and configurable. Guardrails are not only suggestions.
 
-## Web interface: a live assistant in the browser
-
-<p align="left">
-  <img src="screenshots/basicagent-webinterface.jpg" alt="Application Screenshot" width="800">
-</p>
 
 ## Recommended models
-
-basicagent works well with the larger cloud models from DeepSeek and OpenAI.
-It also works well with, for example, the free *gemma4:31b* model in Ollama
-Cloud.
-
-### Smaller local models
-
-(tested with a 32k context window)
-
-On a llama.cpp server, *Qwen3.5-4B* (with a matching mmproj file if image
-recognition is needed) did reasonably well but sometimes needed extra context
-or information. *Qwen3.5-9B* was able to put two and two together by itself,
-so it needed far less context or instructions and was more useful for someone
-with less domain knowledge. *Qwen3.5-2B* was less useful and needed a lot of
-manual instructions, to the point where one could better do the task manually.
-Even with that model, basicagent never got into a loop with tool calls, thanks
-to the built-in circuit breaker.
-
-So realistically for local models:
 
 - For scripting with fine-tuned instructions: *Qwen3.5-2B* (or equivalent).
 - As an actual assistant, at minimum: *Qwen3.5-4B* (or equivalent).
@@ -68,40 +31,17 @@ So realistically for local models:
 
 basicagent requires [Node.js 24](https://nodejs.org/en/about/previous-releases)
 or newer (declared in `package.json` engines). There are no external
-dependencies and no build step. It runs on Linux, macOS and Windows.
-
-Having Node.js installed system-wide is recommended: it lets you `npm link`
-basicagent and run it from any directory.
-
-### No Node.js installed?
-
-On Linux x64 you can use the bundled download script to fetch a portable
-Node.js v24.22.1 into the basicagent folder:
-
-```sh
-bash nodejs_download.sh
-```
-
-The script needs `wget`, `tar` and `sha256sum`. Once it finishes:
-
-```sh
-node-v24.22.1-linux-x64/bin/node bin/basicagent-setup.mjs
-```
-
-Use the same prefix for `bin/basicagent.mjs` and `bin/basicagent-web.mjs`.
-The script is Linux x64 only; on macOS or Windows, install Node.js normally.
-
+dependencies or packages
 
 ## Features
 
-- **OpenAI-compatible providers** — Ollama, Ollama Cloud, llama.cpp, DeepSeek, OpenAI.
+- **OpenAI-compatible providers** — Ollama, Ollama Cloud, llama.cpp, DeepSeek, OpenAI, etc.
 - **Image input for vision models** — attach PNG, JPEG or WebP from the CLI or web interface.
 - **Interactive and scriptable** — REPL, instant one-shot runs, JSON-lines output, and a fast local web interface.
 - **Lean, skill-based toolset** — file tools, shell, web fetch, SKILL.md skills and persistent JSONL memory.
 - **Configurable safety** — file-root policies, approval prompts, read-only tool mode with a shell allowlist, SSRF protection, and an audit log with manual age-based pruning.
 - **Loop protection** — iteration limits and a configurable circuit breaker for repeated identical tool failures.
 - **Guided setup** — writes the config, tests the provider and can start the web UI.
-- **Zero dependencies** — Node.js 24+ built-ins only, no build step.
 
 ## Quick start
 
@@ -111,6 +51,7 @@ Get the code first:
 git clone https://github.com/henksys/basicagent.git
 cd basicagent
 ```
+(or download the latest release)
 
 Then run the guided setup:
 
@@ -121,43 +62,8 @@ node bin/basicagent-setup.mjs        # or: npm run setup
 
 The setup writes `~/.config/basicagent/config.json` (copy
 `config.example.json` there to do it by hand). Full provider recipes and
-configuration are in the [tutorial](docs/TUTORIAL.md).
+configuration are in the [tutorial](docs/TUTORIAL.md). After finishing the guided setup, the web-interface will automatically open in your default browser. 
 
-Prefer a single prompt? Run it directly. Without a config it expects a local
-Ollama at `http://localhost:11434/v1`:
-
-```sh
-node bin/basicagent.mjs "list the files here and summarize the project"
-```
-
-For Ollama Cloud:
-
-```sh
-BASICAGENT_BASE_URL=https://ollama.com/v1 \
-BASICAGENT_API_KEY="$OLLAMA_API_KEY_CLOUD" \
-node bin/basicagent.mjs --model gemma4:31b "say hello"
-```
-
-### Run from anywhere
-
-With Node.js 24+ installed, copy the folder to a stable location (for example
-`~/basicagent`) and link the commands:
-
-```sh
-cd ~/basicagent
-npm link
-```
-
-`package.json` defines the commands, so no extra arguments are needed. You can
-then run `basicagent`, `basicagent-web` and `basicagent-setup` from anywhere.
-
-## Upgrading
-
-Configs from before 1.4.0 that still contain `agent.contextChars` are rejected
-at startup. Run `node bin/basicagent-setup.mjs` to migrate (100,000 characters
-is roughly 25,000 tokens), or replace the key with `agent.contextTokens`
-manually. See the
-[tutorial](docs/TUTORIAL.md#upgrading-from-contextchars) for details.
 
 ## Web interface
 
@@ -167,53 +73,18 @@ node bin/basicagent-web.mjs        # or: npm run web
 
 The server binds to `127.0.0.1:8787` by default and prints a URL with an
 access token in the fragment; it also opens that URL in your default browser
-automatically (use `--no-open` to skip, e.g. in scripts or over SSH). The
-token is required for every `/api` request, so other local programs (and
-websites trying DNS rebinding) cannot drive the agent. `--port`, `--host` and
-`--token` are available if you need them; a non-loopback `--host` drops the
-host/origin checks that only make sense for local use.
-
-The UI has three tabs:
-
-- **Chat** — sessions in the sidebar, streamed answers, tool calls with their
-  arguments and results, and approve/deny buttons when a guarded action needs
-  confirmation. Stop cancels the running turn; closing the tab aborts it. A
-  context gauge shows how full the whole-prompt token budget
-  (`agent.contextTokens`) is — not the model's context window. Compaction
-  points appear in the transcript with the summary available to inspect. A
-  per-conversation **Read-only** toggle sits in the composer. Images can be
-  attached with the composer button, dragged in or pasted; the model must
-  support vision.
-- **Settings** — edits the same `config.json` the CLI reads (provider, images,
-  agent limits, file roots, shell, web tool, skills, memory) plus an Advanced section
-  for read-only mode and the tool-breaker threshold. Saving validates the
-  result, writes the file atomically and live-reloads the agent. The API key
-  is never sent to the browser; leave the field empty to keep it. The chat
-  window also has a per-conversation **Read-only** toggle; the Settings
-  checkbox supplies the default for new conversations.
-- **Memory** — facts (add/delete), session transcripts and a filterable audit
-  log with manual age-based pruning, all straight from the JSONL files.
+automatically.
 
 ## Images
 
 Vision-capable models can inspect **PNG, JPEG and WebP** images. The supported
 file extensions are `.png`, `.jpg`, `.jpeg` and `.webp`; JPG and JPEG are the
 same format. Files are identified by their content, not their extension.
-GIF, BMP, TIFF, HEIC, AVIF, SVG, ICO, JPEG XL, RAW and PDF are not supported.
-The image is base64-encoded and sent as a standard OpenAI `image_url` content
-part, which works with OpenAI-compatible cloud APIs, Ollama and llama.cpp.
 
 ```sh
 basicagent --image screenshot.png "What error is shown here?"
 basicagent -i before.webp -i after.webp "What changed?"
 ```
-
-In the REPL, `/image path` queues an image for the next message; `/image`
-lists pending attachments and `/image clear` removes them. The web composer
-accepts the same formats through its attach button, drag-and-drop or paste.
-Images are limited to 4 per message and 5 MiB each by default (`images` in the
-config). The model itself must support vision; otherwise the provider returns
-an error and basicagent explains the likely cause.
 
 ## Documentation
 
@@ -262,7 +133,7 @@ echo "prompt" | basicagent [options]
 REPL commands: `/help /new /reload /skills /tools /model [name] /context
 /compact /image [path|clear] /readonly [on|off] /config /quit`.
 
-The web server is a separate command:
+The web server summary:
 
 ```
 basicagent-web [options]
@@ -276,7 +147,7 @@ basicagent-web [options]
   -v, --version     show version
 ```
 
-The guided setup is its own command too:
+The guided setup summary:
 
 ```
 basicagent-setup [options]
@@ -296,26 +167,13 @@ npm run test:live  # opt-in: requires OLLAMA_API_KEY_CLOUD
 ```
 
 
-## Links
-
-- [Product page](https://henksys.com/product/basicagent.html)
-- [Releases](https://github.com/henksys/basicagent/releases)
-- [Issues](https://github.com/henksys/basicagent/issues)
-
 ## Privacy
 
-basicagent has no dependencies beyond Node.js itself. When you run it with a
-local model, for example via llama.cpp, nothing leaves your machine. There is
-no telemetry and no update checker. You can disable the web-fetch tool in the
-configuration; when you do use it, you can approve each request and trace
-exactly what is being queried. There are no binary files, so the code is fully
-inspectable.
+No telemetry and no update checker. Only network connections that the user itself initiates.
 
 ## License
 
 GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE).
 
 basicagent is an independent, from-scratch implementation. All code in this
-repository was written for this project; its design follows patterns common to
-tool-using agents, such as skill files, schema-validated tool registries and
-approval-based guardrails.
+repository was written for this project.
